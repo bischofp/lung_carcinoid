@@ -1,0 +1,719 @@
+
+```{r setup}
+
+### load libraries
+library(Seurat)
+library(dplyr)
+library(cowplot)
+library(ggplot2)
+library(viridis)
+library(tidyr)
+library(magrittr)
+library(reshape2)
+library(readxl)
+library(readr)
+library(stringr)
+library(gplots)
+library(grid)
+library(rlang)
+library(tibble)
+library(SeuratDisk)
+
+theme_set(theme_cowplot())
+
+#color scheme
+use_colors <- c(
+  Tumor = "brown2",
+  Normal = "deepskyblue2",
+  G1 = "#46ACC8",
+  G2M = "#E58601",
+  S = "#B40F20",
+  Epithelial = "seagreen",
+  Immune = "darkgoldenrod2",
+  Stromal = "steelblue",
+  Patient1 = "#35274A",
+  Patient2 = "#E2D200",
+  Patient3 = "#FD6467",
+  Patient4 = "#5B1A18",
+  Patient5 = "#46ACC8",
+  Patient6 = "#E58601",
+  Patient7 = "#B40F20",
+  Patient8 = "#0B775E",
+  Patient9 = "#E1BD6D",
+  Patient10 = "#7294D4",
+  Endothelial_Bronchial = "#FED976",
+  Endothelial_Artery = "#fd8d3C",
+  Endothelial_Vein = "#E31A1C",
+  Endothelial_Capillary = "#800026",
+  Lymphatic = "salmon",
+  Fibro = "#2166AC",
+  Myofibro = "#4393C3",
+  Pericyte = "#5AAE61",
+  Muscle_Airway = "#9970AB",
+  Muscle_Vascular = "#40004B",
+  Mesothelial = "#1B7837")
+
+```
+
+```{r heatmap wrapper function}
+
+###code from https://github.com/satijalab/seurat/issues/2201
+
+DoMultiBarHeatmap <- function (object, 
+                               features = NULL, 
+                               cells = NULL, 
+                               group.by = "ident", 
+                               additional.group.by = NULL, 
+                               additional.group.sort.by = NULL, 
+                               cols.use = NULL,
+                               group.bar = TRUE, 
+                               disp.min = -2.5, 
+                               disp.max = NULL, 
+                               slot = "scale.data", 
+                               assay = NULL, 
+                               label = TRUE, 
+                               size = 5.5, 
+                               hjust = 0, 
+                               angle = 45, 
+                               raster = TRUE, 
+                               draw.lines = TRUE, 
+                               lines.width = NULL, 
+                               group.bar.height = 0.02, 
+                               combine = TRUE) 
+{
+  cells <- cells %||% colnames(x = object)
+  if (is.numeric(x = cells)) {
+    cells <- colnames(x = object)[cells]
+  }
+  assay <- assay %||% DefaultAssay(object = object)
+  DefaultAssay(object = object) <- assay
+  features <- features %||% VariableFeatures(object = object)
+  ## Why reverse???
+  features <- rev(x = unique(x = features))
+  disp.max <- disp.max %||% ifelse(test = slot == "scale.data", 
+                                   yes = 2.5, no = 6)
+  possible.features <- rownames(x = GetAssayData(object = object, 
+                                                 slot = slot))
+  if (any(!features %in% possible.features)) {
+    bad.features <- features[!features %in% possible.features]
+    features <- features[features %in% possible.features]
+    if (length(x = features) == 0) {
+      stop("No requested features found in the ", slot, 
+           " slot for the ", assay, " assay.")
+    }
+    warning("The following features were omitted as they were not found in the ", 
+            slot, " slot for the ", assay, " assay: ", paste(bad.features, 
+                                                             collapse = ", "))
+  }
+  
+  if (!is.null(additional.group.sort.by)) {
+    if (any(!additional.group.sort.by %in% additional.group.by)) {
+      bad.sorts <- additional.group.sort.by[!additional.group.sort.by %in% additional.group.by]
+      additional.group.sort.by <- additional.group.sort.by[additional.group.sort.by %in% additional.group.by]
+      if (length(x = bad.sorts) > 0) {
+        warning("The following additional sorts were omitted as they were not a subset of additional.group.by : ", 
+                paste(bad.sorts, collapse = ", "))
+      }
+    }
+  }
+  
+  data <- as.data.frame(x = as.matrix(x = t(x = GetAssayData(object = object, 
+                                                             slot = slot)[features, cells, drop = FALSE])))
+  
+  object <- suppressMessages(expr = StashIdent(object = object, 
+                                               save.name = "ident"))
+  group.by <- group.by %||% "ident"
+  groups.use <- object[[c(group.by, additional.group.by[!additional.group.by %in% group.by])]][cells, , drop = FALSE]
+  plots <- list()
+  for (i in group.by) {
+    data.group <- data
+    if (!is_null(additional.group.by)) {
+      additional.group.use <- additional.group.by[additional.group.by!=i]  
+      if (!is_null(additional.group.sort.by)){
+        additional.sort.use = additional.group.sort.by[additional.group.sort.by != i]  
+      } else {
+        additional.sort.use = NULL
+      }
+    } else {
+      additional.group.use = NULL
+      additional.sort.use = NULL
+    }
+    
+    group.use <- groups.use[, c(i, additional.group.use), drop = FALSE]
+    
+    for(colname in colnames(group.use)){
+      if (!is.factor(x = group.use[[colname]])) {
+        group.use[[colname]] <- factor(x = group.use[[colname]])
+      }  
+    }
+    
+    if (draw.lines) {
+      lines.width <- lines.width %||% ceiling(x = nrow(x = data.group) * 
+                                                0.0025)
+      placeholder.cells <- sapply(X = 1:(length(x = levels(x = group.use[[i]])) * 
+                                           lines.width), FUN = function(x) {
+                                             return(Seurat:::RandomName(length = 20))
+                                           })
+      placeholder.groups <- data.frame(rep(x = levels(x = group.use[[i]]), times = lines.width))
+      group.levels <- list()
+      group.levels[[i]] = levels(x = group.use[[i]])
+      for (j in additional.group.use) {
+        group.levels[[j]] <- levels(x = group.use[[j]])
+        placeholder.groups[[j]] = NA
+      }
+      
+      colnames(placeholder.groups) <- colnames(group.use)
+      rownames(placeholder.groups) <- placeholder.cells
+      
+      group.use <- sapply(group.use, as.vector)
+      rownames(x = group.use) <- cells
+      
+      group.use <- rbind(group.use, placeholder.groups)
+      
+      for (j in names(group.levels)) {
+        group.use[[j]] <- factor(x = group.use[[j]], levels = group.levels[[j]])
+      }
+      
+      na.data.group <- matrix(data = NA, nrow = length(x = placeholder.cells), 
+                              ncol = ncol(x = data.group), dimnames = list(placeholder.cells, 
+                                                                           colnames(x = data.group)))
+      data.group <- rbind(data.group, na.data.group)
+    }
+    
+    order_expr <- paste0('order(', paste(c(i, additional.sort.use), collapse=','), ')')
+    group.use = with(group.use, group.use[eval(parse(text=order_expr)), , drop=F])
+    
+    plot <- Seurat:::SingleRasterMap(data = data.group, raster = raster, 
+                                     disp.min = disp.min, disp.max = disp.max, feature.order = features, 
+                                     cell.order = rownames(x = group.use), group.by = group.use[[i]])
+    
+    if (group.bar) {
+      pbuild <- ggplot_build(plot = plot)
+      group.use2 <- group.use
+      cols <- list()
+      na.group <- Seurat:::RandomName(length = 20)
+      for (colname in rev(x = colnames(group.use2))) {
+        if (colname == i) {
+          colid = paste0('Identity (', colname, ')')
+        } else {
+          colid = colname
+        }
+        
+        # Default
+        cols[[colname]] <- c(scales::hue_pal()(length(x = levels(x = group.use[[colname]]))))  
+        
+        #Overwrite if better value is provided
+        if (!is_null(cols.use[[colname]])) {
+          req_length = length(x = levels(group.use))
+          if (length(cols.use[[colname]]) < req_length){
+            warning("Cannot use provided colors for ", colname, " since there aren't enough colors.")
+          } else {
+            if (!is_null(names(cols.use[[colname]]))) {
+              if (all(levels(group.use[[colname]]) %in% names(cols.use[[colname]]))) {
+                cols[[colname]] <- as.vector(cols.use[[colname]][levels(group.use[[colname]])])
+              } else {
+                warning("Cannot use provided colors for ", colname, " since all levels (", paste(levels(group.use[[colname]]), collapse=","), ") are not represented.")
+              }
+            } else {
+              cols[[colname]] <- as.vector(cols.use[[colname]])[c(1:length(x = levels(x = group.use[[colname]])))]
+            }
+          }
+        }
+        
+        # Add white if there's lines
+        if (draw.lines) {
+          levels(x = group.use2[[colname]]) <- c(levels(x = group.use2[[colname]]), na.group)  
+          group.use2[placeholder.cells, colname] <- na.group
+          cols[[colname]] <- c(cols[[colname]], "#FFFFFF")
+        }
+        names(x = cols[[colname]]) <- levels(x = group.use2[[colname]])
+        
+        y.range <- diff(x = pbuild$layout$panel_params[[1]]$y.range)
+        y.pos <- max(pbuild$layout$panel_params[[1]]$y.range) + y.range * 0.015
+        y.max <- y.pos + group.bar.height * y.range
+        pbuild$layout$panel_params[[1]]$y.range <- c(pbuild$layout$panel_params[[1]]$y.range[1], y.max)
+        
+        plot <- suppressMessages(plot + 
+                                   annotation_raster(raster = t(x = cols[[colname]][group.use2[[colname]]]),  xmin = -Inf, xmax = Inf, ymin = y.pos, ymax = y.max) + 
+                                   annotation_custom(grob = grid::textGrob(label = colid, hjust = 0, gp = gpar(cex = 0.75)), ymin = mean(c(y.pos, y.max)), ymax = mean(c(y.pos, y.max)), xmin = Inf, xmax = Inf) +
+                                   coord_cartesian(ylim = c(0, y.max), clip = "off")) 
+        
+        if ((colname == i) && label) {
+          x.max <- max(pbuild$layout$panel_params[[1]]$x.range)
+          x.divs <- pbuild$layout$panel_params[[1]]$x.major %||% pbuild$layout$panel_params[[1]]$x$break_positions()
+          group.use$x <- x.divs
+          label.x.pos <- tapply(X = group.use$x, INDEX = group.use[[colname]],
+                                FUN = median) * x.max
+          label.x.pos <- data.frame(group = names(x = label.x.pos), 
+                                    label.x.pos)
+          plot <- plot + geom_text(stat = "identity", 
+                                   data = label.x.pos, aes_string(label = "group", 
+                                                                  x = "label.x.pos"), y = y.max + y.max * 
+                                     0.03 * 0.5, angle = angle, hjust = hjust, 
+                                   size = size)
+          plot <- suppressMessages(plot + coord_cartesian(ylim = c(0, 
+                                                                   y.max + y.max * 0.002 * max(nchar(x = levels(x = group.use[[colname]]))) * 
+                                                                     size), clip = "off"))
+        }
+      }
+    }
+    plot <- plot + theme(line = element_blank())
+    plots[[i]] <- plot
+  }
+  if (combine) {
+    plots <- CombinePlots(plots = plots)
+  }
+  return(plots)
+}
+```
+
+```{r load data}
+
+str_anno <- readRDS("seurat_objects/str_anno.RDS")
+
+str_anno@meta.data$cell_type_str <- factor(str_anno@meta.data$cell_type_str, levels = c("Endothelial_Bronchial",
+                                                                                        "Endothelial_Artery",
+                                                                                        "Endothelial_Vein",
+                                                                                        "Endothelial_Capillary",
+                                                                                        "Lymphatic",
+                                                                                        "Fibro",
+                                                                                        "Myofibro",
+                                                                                        "Muscle_Airway",
+                                                                                        "Muscle_Vascular",
+                                                                                        "Pericyte",
+                                                                                        "Mesothelial"))
+
+```
+
+```{r UMAPs and marker genes}
+
+DimPlot(str_anno, group.by = "tissue_type", cols = use_colors)
+ggsave2("DimPlot_str_Normal_Tumor.pdf", path = "output/fig4", width = 15, height = 15, units = "cm")
+ggsave2("DimPlot_str_Normal_Tumor.png", path = "output/fig4", width = 15, height = 15, units = "cm")
+
+DimPlot(str_anno, group.by = "patient_id", cols = use_colors)
+ggsave2("DimPlot_str_patients.pdf", path = "output/fig4", width = 15, height = 15, units = "cm")
+ggsave2("DimPlot_str_patients.png", path = "output/fig4", width = 15, height = 15, units = "cm")
+
+DimPlot(str_anno, group.by = "cell_type_str", label = F, split.by = "tissue_type", cols = use_colors, pt.size = 0.5)
+ggsave2("DimPlot_str_cell_types.pdf", path = "output/fig4", width = 30, height = 15, units = "cm")
+ggsave2("DimPlot_str_cell_types.png", path = "output/fig4", width = 30, height = 15, units = "cm")
+
+DotPlot(str_anno, features = rev(c("WT1", "UPK3B", "PDGFRB", "MYH11", "ACTA2", "MYLK", "LUM", "PDGFRA", "CCL21", "PROX1", "PECAM1", "VWF")), group.by = "cell_type_str") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  coord_flip() + 
+  scale_color_viridis()
+ggsave2("DotPlot_markergenes_str.pdf", path = "output/fig4", width = 16, height = 12, units = "cm")
+
+```
+
+```{r cell counts}
+
+###subset data
+
+str_endo <- subset(str_anno, subset = cell_type_str %in% c("Endothelial_Bronchial",
+                                                           "Endothelial_Artery",
+                                                           "Endothelial_Vein",
+                                                           "Endothelial_Capillary",
+                                                           "Lymphatic"))
+str_endo <- ScaleData(str_endo)
+
+str_fibro <- subset(str_anno, subset = cell_type_str %in% c("Fibro",
+                                                            "Myofibro",
+                                                            "Pericyte",
+                                                            "Muscle_Airway",
+                                                            "Muscle_Vascular",
+                                                            "Mesothelial"))
+
+str_fibro <- ScaleData(str_fibro)
+
+
+###absolute cell counts
+
+endo_counts <- FetchData(str_endo, vars = c("tissue_type", "cell_type_str", "sample_id", "patient_id")) %>%  
+  mutate(tissue_type = factor(tissue_type, levels = c("Tumor", "Normal")))
+
+endo_counts_tbl <- endo_counts %>%
+  dplyr::count(cell_type_str, patient_id, tissue_type)
+write_csv(endo_counts_tbl, path = "output/tables/endo_counts.csv")
+
+fibro_counts <- FetchData(str_fibro, vars = c("tissue_type", "cell_type_str", "sample_id", "patient_id")) %>%  
+  mutate(tissue_type = factor(tissue_type, levels = c("Tumor", "Normal"))) 
+
+fibro_counts_tbl <- fibro_counts %>%
+  dplyr::count(cell_type_str, patient_id, tissue_type)
+write_csv(fibro_counts_tbl, path = "output/tables/fibro_counts.csv")
+
+
+###plots
+
+ggplot(data = endo_counts, aes(x = tissue_type, fill = cell_type_str)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = use_colors) +
+  coord_flip() +
+  scale_y_reverse()
+ggsave2("BarPlot_cell_type_str_endo.pdf", path = "output/fig4", width = 20, height = 5, units = "cm")
+
+ggplot(data = fibro_counts, aes(x = tissue_type, fill = cell_type_str)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = use_colors) +
+  coord_flip() +
+  scale_y_reverse()
+ggsave2("BarPlot_cell_type_str_fibro.pdf", path = "output/fig4", width = 20, height = 5, units = "cm")
+
+endo_counts %>%
+  filter(tissue_type == "Tumor") %>%
+  ggplot(aes(x = sample_id, fill = cell_type_str)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = use_colors) +
+  coord_flip() +
+  scale_y_reverse()
+ggsave2("BarPlot_cell_type_str_endo_bypatient.pdf", path = "output/fig4", width = 30, height = 30, units = "cm")
+
+fibro_counts %>%
+  filter(tissue_type == "Tumor") %>%
+  ggplot(aes(x = sample_id, fill = cell_type_str)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = use_colors) +
+  coord_flip() +
+  scale_y_reverse()
+ggsave2("BarPlot_cell_type_str_fibro_bypatient.pdf", path = "output/fig4", width = 30, height = 30, units = "cm")
+
+endo_counts %>%
+  filter(tissue_type == "Normal") %>%
+  ggplot(aes(x = sample_id, fill = cell_type_str)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = use_colors) +
+  coord_flip() +
+  scale_y_reverse()
+ggsave2("BarPlot_cell_type_str_endo_bypatient_normal.pdf", path = "output/fig4", width = 30, height = 30, units = "cm")
+
+fibro_counts %>%
+  filter(tissue_type == "Normal") %>%
+  ggplot(aes(x = sample_id, fill = cell_type_str)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = use_colors) +
+  coord_flip() +
+  scale_y_reverse()
+ggsave2("BarPlot_cell_type_str_fibro_bypatient_normal.pdf", path = "output/fig4", width = 30, height = 30, units = "cm")
+
+```
+
+```{r differential gene expression endothelial cells}
+
+Idents(str_endo) <- str_endo@meta.data$cell_type_str
+
+endo_markers <- FindAllMarkers(str_endo, only.pos = T, min.pct = 0.25, min.diff.pct = 0.25)
+
+top_endo_markers <- endo_markers %>% group_by(cluster) %>% top_n(10, wt = avg_log2FC)
+
+DoMultiBarHeatmap(str_endo, features = top_endo_markers$gene, group.by = "cell_type_str", additional.group.by = "tissue_type",additional.group.sort.by = "tissue_type", cols.use = list(tissue_type = use_colors), draw.lines = F) +
+  scale_fill_viridis()
+ggsave2("HeatMap_Endo.png", path = "output/fig4", width = 30, height = 40, units = "cm")
+ggsave2("HeatMap_Endo.pdf", path = "output/fig4", width = 30, height = 40, units = "cm")
+
+```
+
+```{r differential gene expression muscle/fibroblastic cells}
+
+Idents(str_fibro) <- str_fibro@meta.data$cell_type_str
+
+fibro_markers <- FindAllMarkers(str_fibro, only.pos = T, min.pct = 0.25, min.diff.pct = 0.25)
+
+top_fibro_markers <- fibro_markers %>% group_by(cluster) %>% top_n(10, wt = avg_log2FC)
+
+DoMultiBarHeatmap(str_fibro, features = top_fibro_markers$gene, group.by = "cell_type_str", additional.group.by = "tissue_type",additional.group.sort.by = "tissue_type", cols.use = list(tissue_type = use_colors), draw.lines = F) +
+  scale_fill_viridis()
+ggsave2("HeatMap_Fibro.png", path = "output/fig4", width = 30, height = 40, units = "cm")
+ggsave2("HeatMap_Fibro.pdf", path = "output/fig4", width = 30, height = 40, units = "cm")
+
+```
+
+```{r progeny scores muscle/fibroblastic cells}
+
+str_fibro_no_meso <- subset(str_anno, subset = cell_type_str %in% c("Fibro",
+                                                                    "Myofibro",
+                                                                    "Pericyte",
+                                                                    "Muscle_Airway",
+                                                                    "Muscle_Vascular"))
+
+str_fibro_no_meso <- ScaleData(str_fibro_no_meso)
+
+progeny_scores <- as.data.frame(t(GetAssayData(str_fibro_no_meso, assay = "progeny", slot = "scale.data")))
+progeny_scores$cell_id <- rownames(progeny_scores)
+progeny_scores <- gather(progeny_scores, Pathway, Activity, -cell_id)
+
+cells_clusters <- FetchData(str_fibro_no_meso, c("cell_type_str"))
+cells_clusters$cell_id <- rownames(cells_clusters)
+
+progeny_scores <- inner_join(progeny_scores, cells_clusters)
+
+summarized_progeny_scores <- progeny_scores %>% 
+  group_by(Pathway, cell_type_str) %>% 
+  summarise(avg = mean(Activity), std = sd(Activity)) %>%
+  pivot_wider(id_cols = Pathway, names_from = cell_type_str, values_from = avg) %>%
+  column_to_rownames("Pathway") %>%
+  as.matrix()
+
+pdf("output/fig4/Progeny_Heatmap_fibro.pdf", width = 7, height = 10)
+heatmap.2(summarized_progeny_scores, trace = "none", density.info = "none", col = bluered(100), margins = c(10,10))
+dev.off()
+
+```
+
+```{r selected CAF-related genes}
+
+str_fibro_no_meso@meta.data$cell_type_str_refined <- factor(str_fibro_no_meso@meta.data$cell_type_str_refined, levels = rev(c("Fibro_1",
+                                                                                                                          "Fibro_2",
+                                                                                                                          "Myofibro_1",
+                                                                                                                          "Myofibro_2",
+                                                                                                                          "Muscle_Vascular_1",
+                                                                                                                          "Muscle_Vascular_2",
+                                                                                                                          "Muscle_Vascular_3",
+                                                                                                                          "Muscle_Airway",
+                                                                                                                          "Pericyte_1",
+                                                                                                                          "Pericyte_2")))
+
+DotPlot(str_fibro_no_meso, features = c("FAP", "VCAN", "SULF1", "MMP2", "MMP11", "POSTN", "COL1A1", "COL3A1", "COL5A2", "COL6A3", "COL8A1", "COL10A1", "COL12A1"), group.by = "cell_type_str_refined") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) + 
+  scale_color_viridis()
+ggsave2("DotPlot_Fibro_refined_selected_markers_CAF.pdf", path = "output/fig4", width = 18, height = 10, units = "cm")
+
+```
+
+```{r differential gene expression pericytes tumor vs. normal}
+
+pericytes <- subset(str_anno, cell_type_str == "Pericyte")
+pericytes <- ScaleData(pericytes)
+
+Idents(pericytes) <- pericytes$tissue_type
+
+pericyte_markers <- FindAllMarkers(pericytes, only.pos = T, min.pct = 0.25, min.diff.pct = 0.25)
+
+top.genes <- pericyte_markers %>% filter(cluster == "Tumor") %>% top_n(10, wt = avg_log2FC) %>% .$gene
+
+avg.pericytes <- as.data.frame(log1p(AverageExpression(pericytes, group.by = "tissue_type")$SCT))
+
+avg.pericytes$gene <- rownames(avg.pericytes)
+
+avg.pericytes$ratio <- avg.pericytes$Tumor - avg.pericytes$Normal
+
+p1 <- ggplot(avg.pericytes, aes(x = Normal, y = Tumor)) +
+  geom_point(colour = "grey")
+p1 <- LabelPoints(plot = p1, points = top.genes, repel = T)
+plot_grid(p1)
+ggsave2("ScatterPlot_Pericytes.pdf", path = "output/fig4", width = 10, height = 10, units = "cm")
+
+```
+
+```{r}
+
+DotPlot(str_fibro, features = c("MYH11", "PDGFRB", "COX4I2"), group.by = "cell_type_str_refined")
+
+FeaturePlot(str_fibro, "COX4I2", order = T, pt.size = 1) + scale_color_viridis()
+ggsave2("FeaturePlot_COX4I2.png", path = "output/fig4", width = 10, height = 10, units = "cm")
+
+FeaturePlot(str_fibro, "PDGFRB", order = T, pt.size = 1) + scale_color_viridis()
+ggsave2("FeaturePlot_PDGFRB.png", path = "output/fig4", width = 10, height = 10, units = "cm")
+
+```
+
+```{r}
+
+endo_counts_rel <- endo_counts %>%
+  count(cell_type_str, sample_id, tissue_type) %>%
+  group_by(sample_id) %>%
+  mutate(n_rel = n/sum(n)) %>%
+  pivot_wider(id_cols = c(sample_id, tissue_type), names_from = cell_type_str, values_from = n_rel)
+
+endo_counts_rel[is.na(endo_counts_rel)] <- 0
+
+#ggplot(endo_counts_rel, aes(x = tissue_type, y = Endothelial_Bronchial)) +
+#  geom_jitter() +
+#  ggtitle(paste0("p = ", t.test(formula = Endothelial_Bronchial~tissue_type, data = endo_counts_rel, alternative = "two.sided", paired = F)$p.value))
+
+ggplot(endo_counts_rel, aes(x = tissue_type, y = Endothelial_Bronchial)) +
+  geom_jitter() +
+  ggtitle(paste0("p = ", wilcox.test(endo_counts_rel$Endothelial_Bronchial ~ endo_counts_rel$tissue_type)$p.value))
+
+
+fibro_counts_rel <- fibro_counts %>%
+  count(cell_type_str, sample_id, tissue_type) %>%
+  group_by(sample_id) %>%
+  mutate(n_rel = n/sum(n)) %>%
+  pivot_wider(id_cols = c(sample_id, tissue_type), names_from = cell_type_str, values_from = n_rel)
+
+fibro_counts_rel[is.na(fibro_counts_rel)] <- 0
+
+ggplot(fibro_counts_rel, aes(x = tissue_type, y = Myofibro)) +
+  geom_jitter() +
+  ggtitle(paste0("p = ", wilcox.test(fibro_counts_rel$Myofibro ~ fibro_counts_rel$tissue_type)$p.value))
+
+
+ggplot(fibro_counts_rel, aes(x = tissue_type, y = Fibro)) +
+  geom_jitter() +
+  ggtitle(paste0("p = ", wilcox.test(fibro_counts_rel$Fibro ~ fibro_counts_rel$tissue_type)$p.value))
+
+
+ggplot(fibro_counts_rel, aes(x = tissue_type, y = Muscle_Vascular)) +
+  geom_jitter() +
+  ggtitle(paste0("p = ", wilcox.test(fibro_counts_rel$Muscle_Vascular ~ fibro_counts_rel$tissue_type)$p.value))
+
+
+ggplot(fibro_counts_rel, aes(x = tissue_type, y = Pericyte)) +
+  geom_jitter() +
+  ggtitle(paste0("p = ", wilcox.test(fibro_counts_rel$Pericyte ~ fibro_counts_rel$tissue_type)$p.value))
+
+
+
+endo_counts %>%
+  filter(tissue_type == "Tumor") %>%
+  ggplot(aes(x = patient_id)) + 
+  geom_bar()
+
+```
+
+#cell type ingestion for comparison with reference dataset (lung adenocarcinoma)
+
+```{r}
+
+str_anno$cell_type_str <- as.character(str_anno$cell_type_str)
+
+str_anno_carcinoid <- subset(str_anno, tissue_type == "Tumor")
+
+SaveH5Seurat(str_anno_carcinoid, filename = "loom_files/str_anno_carcinoid.h5Seurat")
+
+Convert("loom_files/str_anno_carcinoid.h5Seurat", dest = "loom_files/str_anno_carcinoid.h5ad")
+
+```
+
+#switch to python script for scanpy ingest and then come back to this R script
+
+```{r}
+
+cell_type_str_new <- read.csv("ingest/mapped_carcinoid_str/obs.csv")
+rownames(cell_type_str_new) <- cell_type_str_new$X
+cell_type_str_new <- cell_type_str_new %>% select(cell_type_str)
+cell_type_str_new$cell_type_str_new <- cell_type_str_new$cell_type_str
+cell_type_str_new$cell_type_str <- NULL
+str_anno_carcinoid <- AddMetaData(str_anno_carcinoid, metadata = cell_type_str_new)
+
+umap_str_new <- read.csv("ingest/mapped_carcinoid_str/obsm.csv")
+rownames(umap_str_new) <- rownames(cell_type_str_new)
+umap_str_new$UMAP_1 <- umap_str_new$X_umap1
+umap_str_new$UMAP_2 <- umap_str_new$X_umap2
+umap_str_new <- umap_str_new %>% select(UMAP_1, UMAP_2) %>% as.matrix()
+str_anno_carcinoid@reductions$umap@cell.embeddings <- umap_str_new
+
+```
+
+```{r ingested cell type annotation}
+
+use_colors2 <- c(
+  Endothelial1 = "#FED976",
+  Endothelial2 = "#FEB24C",
+  Endothelial3 = "#fd8d3C",
+  Endothelial4 = "#FC4E2A",
+  Endothelial5 = "#E31A1C",
+  Endothelial6 = "#BD0026",
+  Endothelial7 = "#800026",
+  Lymphaticendothelial = "salmon",
+  Fibroblast1 = "#2166AC",
+  Fibroblast2 = "#4393C3",
+  Myofibroblast1 = "#5AAE61",
+  Myofibroblast2 = "#1B7837",
+  Smoothmuscle1 = "#9970AB",
+  Smoothmuscle2 = "#762A83",
+  Mesothelial = "#40004B")
+
+str_anno_carcinoid@meta.data$cell_type_str_new <- factor(str_anno_carcinoid@meta.data$cell_type_str_new, levels = c("Endothelial1",
+                                                                                        "Endothelial2",
+                                                                                        "Endothelial3",
+                                                                                        "Endothelial4",
+                                                                                        "Endothelial5",
+                                                                                        "Endothelial6",
+                                                                                        "Endothelial7",
+                                                                                        "Lymphaticendothelial",
+                                                                                        "Fibroblast1",
+                                                                                        "Fibroblast2",
+                                                                                        "Myofibroblast1",
+                                                                                        "Myofibroblast2",
+                                                                                        "Smoothmuscle1",
+                                                                                        "Smoothmuscle2",
+                                                                                        "Mesothelial"))
+
+str_endo <- subset(str_anno_carcinoid, subset = cell_type_str_new %in% c("Endothelial1",
+                                                         "Endothelial2",
+                                                         "Endothelial3",
+                                                         "Endothelial4",
+                                                         "Endothelial5",
+                                                         "Endothelial6",
+                                                         "Endothelial7",
+                                                         "Lymphaticendothelial"))
+str_endo <- ScaleData(str_endo)
+
+str_fibro <- subset(str_anno_carcinoid, subset = cell_type_str_new %in% c("Fibroblast1",
+                                                          "Fibroblast2",
+                                                          "Myofibroblast1",
+                                                          "Myofibroblast2",
+                                                          "Smoothmuscle1",
+                                                          "Smoothmuscle2",
+                                                          "Mesothelial"))
+
+str_fibro <- ScaleData(str_fibro)
+
+endo_counts <- FetchData(str_endo, vars = c("tissue_type", "cell_type_str_new", "sample_id", "patient_id")) %>%  
+  mutate(tissue_type = factor(tissue_type, levels = c("Tumor", "Normal")))
+
+endo_counts_tbl <- endo_counts %>%
+  dplyr::count(cell_type_str_new, patient_id, tissue_type)
+#write_csv(endo_counts_tbl, path = "output/fig5/endo_counts.csv")
+
+fibro_counts <- FetchData(str_fibro, vars = c("tissue_type", "cell_type_str_new", "sample_id", "patient_id")) %>%  
+  mutate(tissue_type = factor(tissue_type, levels = c("Tumor", "Normal"))) 
+
+fibro_counts_tbl <- fibro_counts %>%
+  dplyr::count(cell_type_str_new, patient_id, tissue_type)
+#write_csv(fibro_counts_tbl, path = "output/fig5/fibro_counts.csv")
+
+ggplot(data = endo_counts, aes(x = tissue_type, fill = cell_type_str_new)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = use_colors2) +
+  coord_flip() +
+  scale_y_reverse()
+ggsave2("BarPlot_cell_type_str_endo.pdf", path = "output/ingested_annotation", width = 20, height = 5, units = "cm")
+
+ggplot(data = fibro_counts, aes(x = tissue_type, fill = cell_type_str_new)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = use_colors2) +
+  coord_flip() +
+  scale_y_reverse()
+ggsave2("BarPlot_cell_type_str_fibro.pdf", path = "output/ingested_annotation", width = 20, height = 5, units = "cm")
+
+endo_counts %>%
+  filter(tissue_type == "Tumor") %>%
+  ggplot(aes(x = sample_id, fill = cell_type_str_new)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = use_colors2) +
+  coord_flip() +
+  scale_y_reverse()
+ggsave2("BarPlot_cell_type_str_endo_patients.pdf", path = "output/ingested_annotation", width = 20, height = 5, units = "cm")
+
+fibro_counts %>%
+  filter(tissue_type == "Tumor") %>%
+  ggplot(aes(x = sample_id, fill = cell_type_str_new)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = use_colors2) +
+  coord_flip() +
+  scale_y_reverse()
+ggsave2("BarPlot_cell_type_str_fibro_patients.pdf", path = "output/ingested_annotation", width = 20, height = 5, units = "cm")
+
+DimPlot(str_anno_carcinoid, group.by = "cell_type_str", cols = use_colors)
+ggsave2("UMAP_cell_type_str.pdf", path = "output/ingested_annotation", width = 15, height = 15, units = "cm")
+ggsave2("UMAP_cell_type_str.png", path = "output/ingested_annotation", width = 15, height = 15, units = "cm")
+
+DimPlot(str_anno_carcinoid, group.by = "cell_type_str_new", cols = use_colors2)
+ggsave2("UMAP_cell_type_str_new.pdf", path = "output/ingested_annotation", width = 15, height = 15, units = "cm")
+ggsave2("UMAP_cell_type_str_new.png", path = "output/ingested_annotation", width = 15, height = 15, units = "cm")
+
+```

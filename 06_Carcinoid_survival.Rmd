@@ -1,0 +1,353 @@
+
+```{r setup}
+
+library(readxl)
+library(tidyverse)
+library(survminer)
+library(survival)
+library(DESeq2)
+library(Seurat)
+library(GSVA)
+library(cowplot)
+
+theme_set(theme_cowplot())
+
+```
+
+```{r load gene expression and clinical data}
+
+#gene expression source: https://www.github.com/IARCbioinfo/DRMetrics
+#clinical data source: https://www.nature.com/articles/s41467-019-11276-9#MOESM4 (Supplementary Data 1)
+
+clinical_data <- read_excel("data/41467_2019_11276_MOESM4_ESM.xlsx", range = "A41:U299")
+clinical_data <- clinical_data %>% 
+  filter(Histopathology %in% c("Typical", "Atypical", "Carcinoid")) %>%
+  filter(Survival_censor != "NA") %>%
+  filter(Survival_months != "NA")
+
+
+
+count_data <- read.table("data/read_counts_all.txt", header = T, row.names = 1) %>% as.matrix()
+count_data <- count_data[ , which(colnames(count_data) %in% clinical_data$Sample_ID)]
+
+
+genespans_data <- read.table(("data/ref_annot.gtf.gene_spans"))
+rownames(genespans_data) <- genespans_data$V1
+
+# Remove genes on sex and mitochondrial chromosomes
+
+gene_names <- rownames(count_data)
+summary(gene_names %in% rownames(genespans_data))
+
+genes_nosex <- genespans_data[!(genespans_data$V2 %in% c("chrM", "chrX", "chrY")), ]
+
+count_data <- count_data[which(rownames(count_data) %in% rownames(genes_nosex)), ]
+dim(count_data)
+
+```
+
+```{r normalize read counts}
+
+colData <- as.matrix(colnames(count_data))
+DESeq_object <- DESeqDataSetFromMatrix(countData = count_data, colData = colData, design = ~1)
+VST <- varianceStabilizingTransformation(DESeq_object)
+VST <- assay(VST)
+dim(VST)
+
+VST_normalized_data <- as.data.frame(VST)
+
+VST_normalized_data <- merge(VST_normalized_data, genespans_data, by = 0)
+
+VST_normalized_data <- filter(VST_normalized_data, !duplicated(V6))
+
+rownames(VST_normalized_data) <- VST_normalized_data$V6
+
+VST_normalized_data <- as.matrix(VST_normalized_data[,2:77])
+
+```
+
+```{r load seurat objects and find marker genes}
+
+imm_anno <- readRDS("seurat_objects/imm_anno.RDS")
+
+imm_lympho <- subset(imm_anno, subset = cell_type_imm %in% c("T_conv",
+                                                             "T_CD8",
+                                                             "NK",
+                                                             "T/NK_proliferating",
+                                                             "B",
+                                                             "Plasma"))
+
+imm_lympho <- ScaleData(imm_lympho)
+
+imm_myelo <- subset(imm_anno, subset = cell_type_imm %in% c("Macrophage",
+                                                            "Macrophage_proliferating",
+                                                            "Myeloid",
+                                                            "Monocyte",
+                                                            "cDC",
+                                                            "pDC",
+                                                            "Mast"))
+
+imm_myelo <- ScaleData(imm_myelo)
+
+
+
+str_anno <- readRDS("seurat_objects/str_anno.RDS")
+
+str_endo <- subset(str_anno, subset = cell_type_str %in% c("Endothelial_Bronchial",
+                                                           "Endothelial_Artery",
+                                                           "Endothelial_Vein",
+                                                           "Endothelial_Capillary",
+                                                           "Lymphatic"))
+str_endo <- ScaleData(str_endo)
+
+str_fibro <- subset(str_anno, subset = cell_type_str %in% c("Fibro",
+                                                            "Myofibro",
+                                                            "Muscle_Airway",
+                                                            "Muscle_Vascular",
+                                                            "Pericyte",
+                                                            "Mesothelial"))
+str_fibro <- ScaleData(str_fibro)
+
+
+
+# Find marker genes for cell types
+
+Idents(imm_myelo) <- imm_myelo@meta.data$cell_type_imm
+Idents(imm_lympho) <- imm_lympho@meta.data$cell_type_imm
+Idents(str_endo) <- str_endo@meta.data$cell_type_str
+Idents(str_fibro) <- str_fibro@meta.data$cell_type_str
+
+myelo_markers <- FindAllMarkers(imm_myelo, only.pos = T, min.pct = 0.25, min.diff.pct = 0.25)
+write_csv(myelo_markers, path = "output/tables/myelo_markers.csv")
+
+lympho_markers <- FindAllMarkers(imm_lympho, only.pos = T, min.pct = 0.25, min.diff.pct = 0.25)
+write_csv(lympho_markers, path = "output/tables/lympho_markers.csv")
+
+endo_markers <- FindAllMarkers(str_endo, only.pos = T, min.pct = 0.25, min.diff.pct = 0.25)
+write_csv(endo_markers, path = "output/tables/endo_markers.csv")
+
+fibro_markers <- FindAllMarkers(str_fibro, only.pos = T, min.pct = 0.25, min.diff.pct = 0.25)
+write_csv(fibro_markers, path = "output/tables/fibro_markers.csv")
+
+clusters_myelo <- as.character(unique(myelo_markers$cluster))
+clusters_lympho <- as.character(unique(lympho_markers$cluster))
+clusters_endo <- as.character(unique(endo_markers$cluster))
+clusters_fibro <- as.character(unique(fibro_markers$cluster))
+
+markers <- list()
+
+for (i in seq_along(clusters_myelo)){
+  markers[paste0(clusters_myelo[i])] <- myelo_markers %>% filter(cluster == clusters_myelo[i]) %>% dplyr::select(gene)
+}
+
+for (i in seq_along(clusters_lympho)){
+  markers[paste0(clusters_lympho[i])] <- lympho_markers %>% filter(cluster == clusters_lympho[i]) %>% dplyr::select(gene)
+}
+
+for (i in seq_along(clusters_endo)){
+  markers[paste0(clusters_endo[i])] <- endo_markers %>% filter(cluster == clusters_endo[i]) %>% dplyr::select(gene)
+}
+
+for (i in seq_along(clusters_fibro)){
+  markers[paste0(clusters_fibro[i])] <- fibro_markers %>% filter(cluster == clusters_fibro[i]) %>% dplyr::select(gene)
+}
+
+
+# Find marker genes for cell clusters (= cell types refined)
+
+Idents(imm_myelo) <- imm_myelo@meta.data$cell_type_imm_refined
+Idents(imm_lympho) <- imm_lympho@meta.data$cell_type_imm_refined
+Idents(str_endo) <- str_endo@meta.data$cell_type_str_refined
+Idents(str_fibro) <- str_fibro@meta.data$cell_type_str_refined
+
+myelo_markers_refined <- FindAllMarkers(imm_myelo, only.pos = T, min.pct = 0.25, min.diff.pct = 0.25)
+write_csv(myelo_markers, path = "output/tables/myelo_clusters_markers.csv")
+
+lympho_markers_refined <- FindAllMarkers(imm_lympho, only.pos = T, min.pct = 0.25, min.diff.pct = 0.25)
+write_csv(lympho_markers, path = "output/tables/lympho_clusters_markers.csv")
+
+endo_markers_refined <- FindAllMarkers(str_endo, only.pos = T, min.pct = 0.25, min.diff.pct = 0.25)
+write_csv(endo_markers, path = "output/tables/endo_clusters_markers.csv")
+
+fibro_markers_refined <- FindAllMarkers(str_fibro, only.pos = T, min.pct = 0.25, min.diff.pct = 0.25)
+write_csv(fibro_markers, path = "output/tables/fibro_clusters_markers.csv")
+
+clusters_myelo_refined <- as.character(unique(myelo_markers_refined$cluster))
+clusters_lympho_refined <- as.character(unique(lympho_markers_refined$cluster))
+clusters_endo_refined <- as.character(unique(endo_markers_refined$cluster))
+clusters_fibro_refined <- as.character(unique(fibro_markers_refined$cluster))
+
+markers_refined <- list()
+
+for (i in seq_along(clusters_myelo_refined)){
+  markers_refined[paste0(clusters_myelo_refined[i])] <- myelo_markers_refined %>% filter(cluster == clusters_myelo_refined[i]) %>% dplyr::select(gene)
+}
+
+for (i in seq_along(clusters_lympho_refined)){
+  markers_refined[paste0(clusters_lympho_refined[i])] <- lympho_markers_refined %>% filter(cluster == clusters_lympho_refined[i]) %>% dplyr::select(gene)
+}
+
+for (i in seq_along(clusters_endo_refined)){
+  markers_refined[paste0(clusters_endo_refined[i])] <- endo_markers_refined %>% filter(cluster == clusters_endo_refined[i]) %>% dplyr::select(gene)
+}
+
+for (i in seq_along(clusters_fibro_refined)){
+  markers_refined[paste0(clusters_fibro_refined[i])] <- fibro_markers_refined %>% filter(cluster == clusters_fibro_refined[i]) %>% dplyr::select(gene)
+}
+```
+
+```{r perform ssGSEA using marker gene lists as gene sets}
+
+#Use cell type marker genes
+
+VST_normalized_gsva <- gsva(expr = VST_normalized_data, gset.idx.list = markers, method = "ssgsea", verbose = TRUE, kcdf = "Gaussian")
+
+VST_normalized_gsva <- as.data.frame(t(VST_normalized_gsva))
+
+#Use cell cluster marker genes
+VST_normalized_gsva_refined <- gsva(expr = VST_normalized_data, gset.idx.list = markers_refined, method = "ssgsea", verbose = TRUE, kcdf = "Gaussian")
+
+VST_normalized_gsva_refined <- as.data.frame(t(VST_normalized_gsva_refined))
+
+```
+
+```{r binarize ssGSEA scores and survival data}
+
+clinical_data <- mutate(clinical_data, Survival_censor_bin = ifelse(Survival_censor == "alive", 0, 1))
+rownames(clinical_data) <- clinical_data$Sample_ID
+
+
+
+# Cell type marker genes
+set_names <- colnames(VST_normalized_gsva[1:24])
+  
+for (i in seq_along(set_names)) {
+  VST_normalized_gsva[,paste0(set_names[i], "_bin")] <- ifelse(VST_normalized_gsva[,set_names[i]] > median(VST_normalized_gsva[,set_names[i]]), 1, 0)
+}
+
+VST_normalized_gsva_combined <- merge(VST_normalized_gsva, clinical_data, by = 0)
+
+
+
+# Cell cluster marker genes
+set_names_refined <- colnames(VST_normalized_gsva_refined[1:67])
+  
+for (i in seq_along(set_names_refined)) {
+  VST_normalized_gsva_refined[,paste0(set_names_refined[i], "_bin")] <- ifelse(VST_normalized_gsva_refined[,set_names_refined[i]] > median(VST_normalized_gsva_refined[,set_names_refined[i]]), 1, 0)
+}
+
+VST_normalized_gsva_refined_combined <- merge(VST_normalized_gsva_refined, clinical_data, by = 0)
+
+```
+
+```{r}
+
+#Survival curves for cell type marker genes
+
+for (i in c(26:49)) {
+  print(ggsurvplot(survfit(Surv(as.numeric(Survival_months), Survival_censor_bin)~VST_normalized_gsva_combined[[i]], data = VST_normalized_gsva_combined), pval = T, pval.method = T, title = paste0(colnames(VST_normalized_gsva_combined)[i]), xlim = c(0,240), break.x.by = 30, palette = c("Red", "Blue")))
+  ggsave2(paste0("survival_", i,".pdf"), path = "output/survival", width = 8, height = 10, units = "cm")
+}
+
+
+
+#Survival curves for cell cluster marker genes
+
+for (i in c(69:135)) {
+  print(ggsurvplot(survfit(Surv(as.numeric(Survival_months), Survival_censor_bin)~VST_normalized_gsva_refined_combined[[i]], data = VST_normalized_gsva_refined_combined), pval = T, pval.method = T, title = paste0(colnames(VST_normalized_gsva_refined_combined)[i]), xlim = c(0,240), break.x.by = 30, palette = c("Red", "Blue")))
+  ggsave2(paste0("survival_refined_", i,".pdf"), path = "output/survival", width = 8, height = 10, units = "cm")
+}
+
+```
+
+```{r compare ssGSEA scores between Typical and Atypical Carcinoids}
+
+###cell types
+
+VST_normalized_gsva_combined_filtered <- VST_normalized_gsva_combined %>%
+  filter(Histopathology %in% c("Typical", "Atypical")) %>% 
+  group_by(Histopathology) %>%
+  mutate(Histopathology = ordered(Histopathology, c("Typical", "Atypical")))
+
+#Pericytes and Vascular smooth muscle cells
+
+ggplot(VST_normalized_gsva_combined_filtered, aes(x = Histopathology, y = Muscle_Vascular)) +
+  geom_boxplot() +
+  scale_y_continuous(limits = c(0.5,1)) +
+  ggtitle(paste0("p = ", t.test(formula = Muscle_Vascular~Histopathology, data = VST_normalized_gsva_combined_filtered, alternative = "two.sided", paired = F)$p.value))
+ggsave2("TC_vs_AT_Muscle_Vascular.pdf", path = "output/fig4", width = 8, height = 8, units = "cm")
+
+ggplot(VST_normalized_gsva_combined_filtered, aes(x = Histopathology, y = Pericyte)) +
+  geom_boxplot() +
+  scale_y_continuous(limits = c(0.5,1)) +
+  ggtitle(paste0("p = ", t.test(formula = Pericyte~Histopathology, data = VST_normalized_gsva_combined_filtered, alternative = "two.sided", paired = F)$p.value))
+ggsave2("TC_vs_AT_Pericyte.pdf", path = "output/fig4", width = 8, height = 8, units = "cm")
+
+
+
+###refined cell clusters
+
+VST_normalized_gsva_refined_combined_filtered <- VST_normalized_gsva_refined_combined %>%
+  filter(Histopathology %in% c("Typical", "Atypical")) %>% 
+  group_by(Histopathology) %>%
+  mutate(Histopathology = ordered(Histopathology, c("Typical", "Atypical")))
+
+#Myofibro 1 and 2
+
+ggplot(VST_normalized_gsva_refined_combined_filtered, aes(x = Histopathology, y = Myofibro_1)) +
+  geom_boxplot() +
+  scale_y_continuous(limits = c(0.5,1)) +
+  ggtitle(paste0("p = ", t.test(formula = Myofibro_1~Histopathology, data = VST_normalized_gsva_refined_combined_filtered, alternative = "two.sided", paired = F)$p.value))
+ggsave2("TC_vs_AT_Myofibro1.pdf", path = "output/fig4", width = 8, height = 8, units = "cm")
+
+ggplot(VST_normalized_gsva_refined_combined_filtered, aes(x = Histopathology, y = Myofibro_2)) +
+  geom_boxplot() +
+  scale_y_continuous(limits = c(0.5,1)) +
+  ggtitle(paste0("p = ", t.test(formula = Myofibro_2~Histopathology, data = VST_normalized_gsva_refined_combined_filtered, alternative = "two.sided", paired = F)$p.value))
+ggsave2("TC_vs_AT_Myofibro2.pdf", path = "output/fig4", width = 8, height = 8, units = "cm")
+
+#Myeloid 2 and 3
+
+ggplot(VST_normalized_gsva_refined_combined_filtered, aes(x = Histopathology, y = Myeloid_2)) +
+  geom_boxplot() +
+  scale_y_continuous(limits = c(0.5,1)) +
+  ggtitle(paste0("p = ", t.test(formula = Myeloid_2~Histopathology, data = VST_normalized_gsva_refined_combined_filtered, alternative = "two.sided", paired = F)$p.value))
+ggsave2("TC_vs_AT_Myeloid_2.pdf", path = "output/fig3", width = 8, height = 8, units = "cm")
+
+ggplot(VST_normalized_gsva_refined_combined_filtered, aes(x = Histopathology, y = Myeloid_3)) +
+  geom_boxplot() +
+  scale_y_continuous(limits = c(0.5,1)) +
+  ggtitle(paste0("p = ", t.test(formula = Myeloid_3~Histopathology, data = VST_normalized_gsva_refined_combined_filtered, alternative = "two.sided", paired = F)$p.value))
+ggsave2("TC_vs_AT_Myeloid_3.pdf", path = "output/fig3", width = 8, height = 8, units = "cm")
+
+#cDC 1 and 2
+
+ggplot(VST_normalized_gsva_refined_combined_filtered, aes(x = Histopathology, y = cDC_1)) +
+  geom_boxplot() +
+  scale_y_continuous(limits = c(0.5,1)) +
+  ggtitle(paste0("p = ", t.test(formula = cDC_1~Histopathology, data = VST_normalized_gsva_refined_combined_filtered, alternative = "two.sided", paired = F)$p.value))
+ggsave2("TC_vs_AT_cDC_1.pdf", path = "output/fig3", width = 8, height = 8, units = "cm")
+
+ggplot(VST_normalized_gsva_refined_combined_filtered, aes(x = Histopathology, y = cDC_2)) +
+  geom_boxplot() +
+  scale_y_continuous(limits = c(0.5,1)) +
+  ggtitle(paste0("p = ", t.test(formula = cDC_2~Histopathology, data = VST_normalized_gsva_refined_combined_filtered, alternative = "two.sided", paired = F)$p.value))
+ggsave2("TC_vs_AT_cDC_2.pdf", path = "output/fig3", width = 8, height = 8, units = "cm")
+
+#Monocytes 2
+
+ggplot(VST_normalized_gsva_refined_combined_filtered, aes(x = Histopathology, y = Monocyte_2)) +
+  geom_boxplot() +
+  scale_y_continuous(limits = c(0.5,1)) +
+  ggtitle(paste0("p = ", t.test(formula = Monocyte_2~Histopathology, data = VST_normalized_gsva_refined_combined_filtered, alternative = "two.sided", paired = F)$p.value))
+ggsave2("TC_vs_AT_Monocyte_2.pdf", path = "output/fig3", width = 8, height = 8, units = "cm")
+
+#Mast
+
+ggplot(VST_normalized_gsva_refined_combined_filtered, aes(x = Histopathology, y = Mast)) +
+  geom_boxplot() +
+  scale_y_continuous(limits = c(0.5,1)) +
+  ggtitle(paste0("p = ", t.test(formula = Mast~Histopathology, data = VST_normalized_gsva_refined_combined_filtered, alternative = "two.sided", paired = F)$p.value))
+ggsave2("TC_vs_AT_Mast.pdf", path = "output/fig3", width = 8, height = 8, units = "cm")
+
+```

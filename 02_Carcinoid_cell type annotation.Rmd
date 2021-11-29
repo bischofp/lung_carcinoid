@@ -1,0 +1,547 @@
+
+```{r setup}
+
+### load libraries
+library(Seurat)
+library(dplyr)
+library(cowplot)
+library(ggplot2)
+library(viridis)
+library(tidyr)
+library(magrittr)
+library(reshape2)
+library(readxl)
+library(readr)
+library(stringr)
+library(progeny)
+library(scales)
+
+theme_set(theme_cowplot())
+
+#color scheme
+use_colors <- c(
+  Tumor = "brown2",
+  Normal = "deepskyblue2")
+
+```
+
+```{r read splitted datasets}
+
+epi <- readRDS("seurat_objects/epi.RDS")
+imm <- readRDS("seurat_objects/imm.RDS")
+str <- readRDS("seurat_objects/str.RDS")
+
+```
+
+```{r rerun PCA, reclustering}
+
+### epithelial subclustering
+
+epi <- RunPCA(epi)
+ElbowPlot(epi,  ndims = 50)
+
+# test umap to find appropriate n of dimensions
+#for (i in c(10, 15, 20, 25)){
+#  umaptest <- RunUMAP(epi, dims = 1:i, verbose = F)
+#  print(DimPlot(umaptest, reduction = "umap", group.by = "patient_id", split.by = "tissue_type") + labs(title = paste0(i, "dimensions")))
+#  remove(umaptest)
+#}
+
+# choose n of dimensions for umap and clustering
+epi <- RunUMAP(epi, dims = 1:10)
+epi <- FindNeighbors(epi, dims = 1:10)
+for (i in c(0.2, 0.3, 0.4, 0.5, 1, 2)) {
+  epi <- FindClusters(epi, resolution = i)
+  print(DimPlot(epi, reduction = "umap", label = T) + labs(title = paste0("resolution: ", i)))
+}
+
+# choose clustering resolution
+Idents(epi) <- epi@meta.data$SCT_snn_res.2
+
+
+### immune subclustering
+
+imm <- RunPCA(imm)
+ElbowPlot(imm,  ndims = 50)
+
+# test umap to find appropriate n of dimensions
+#for (i in c(10, 15, 20, 25)){
+#  umaptest <- RunUMAP(imm, dims = 1:i, verbose = F)
+#  print(DimPlot(umaptest, reduction = "umap", group.by = "patient_id", split.by = "tissue_type") + labs(title = paste0(i, " dimensions")))
+#  remove(umaptest)
+#}
+
+# choose n of dimensions for umap and clustering
+imm <- RunUMAP(imm, dims = 1:10)
+imm <- FindNeighbors(imm, dims = 1:10)
+for (i in c(0.2, 0.3, 0.4, 0.5, 1, 2)) {
+  imm <- FindClusters(imm, resolution = i)
+  print(DimPlot(imm, reduction = "umap", label = T) + labs(title = paste0("resolution: ", i)))
+}
+
+# choose clustering resolution
+Idents(imm) <- imm@meta.data$SCT_snn_res.2
+
+
+### stromal sublustering
+
+str <- RunPCA(str)
+ElbowPlot(str, ndims = 50)
+
+# test umap to find appropriate n of dimensions
+#for (i in c(5, 10, 15, 20, 25, 30)){
+#  umaptest <- RunUMAP(str, dims = 1:i, verbose = F)
+#  print(DimPlot(umaptest, reduction = "umap", group.by = "patient_id", split.by = "tissue_type") + labs(title = paste0(i, " dimensions")))
+#  print(DimPlot(umaptest, reduction = "umap", group.by = "tissue_type") + labs(title = paste0(i, " dimensions")))
+#  remove(umaptest)
+#}
+
+# choose n of dimensions for umap and clustering
+str <- RunUMAP(str, dims = 1:10)
+str <- FindNeighbors(str, dims = 1:10)
+for (i in c(0.2, 0.3, 0.4, 0.5, 1, 2)) {
+  str <- FindClusters(str, resolution = i)
+  print(DimPlot(str, reduction = "umap", label = T) + labs(title = paste0("resolution: ", i)))
+}
+
+# choose clustering resolution
+Idents(str) <- str@meta.data$SCT_snn_res.2
+
+```
+
+```{r define tumor cell clusters}
+
+DimPlot(epi, group.by = "SCT_snn_res.2", label = T, repel = T, split.by = "tissue_type")
+ggsave2("DimPlot_epi_clusters.png", path = "output/fig2", width = 30, height = 15, units = "cm")
+
+### compare proportion of cells in a cluster to all epithelial cells for tumor and normal separately, clusters overrepresented in normal samples are supposed to be cell of normal lung parenchyma, all other clusters are supposed to be tumor cells
+
+epi_clusters <- FetchData(epi, vars = c("SCT_snn_res.2", "tissue_type"))
+
+epi_counts <- epi_clusters %>%
+  dplyr::count(SCT_snn_res.2, tissue_type) %>%
+  group_by(tissue_type) %>% 
+  mutate(n_rel = n/sum(n)) %>% 
+  select(SCT_snn_res.2, tissue_type, n_rel) %>%
+  pivot_wider(names_from = tissue_type, values_from = n_rel) %>%
+  mutate(Tumor = ifelse(is.na(Tumor), 0,  Tumor)) %>%
+  mutate(Normal = ifelse(is.na(Normal), 0,  Normal)) %>%
+  mutate(cluster_type = ifelse(Normal > Tumor, "Normal", "Tumor"))
+
+cluster_type_data <- left_join(x = epi_clusters, y = epi_counts, by = "SCT_snn_res.2")
+rownames(cluster_type_data) <- rownames(epi_clusters)
+
+epi <- AddMetaData(epi, select(cluster_type_data, cluster_type))
+
+epi_counts <- epi_counts %>%
+  pivot_longer(cols = c(Normal, Tumor), names_to = "tissue_type", values_to = "n_rel")
+
+ggplot(epi_counts, aes(fill = tissue_type, y = n_rel, x = SCT_snn_res.2)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  scale_fill_manual(values = use_colors)
+ggsave2("BarPlot_proportion_epi.pdf", path = "output/fig2", width = 40, height = 20, units = "cm")
+
+DimPlot(epi, group.by = "cluster_type")
+
+```
+
+
+# Cell type scoring
+
+## Habermann et al.
+https://www.biorxiv.org/content/10.1101/753806v1
+
+```{r habermann marker genes}
+
+habermann_epi <- c("ABCA3", "SFTPB", "SFTPC", "AGER", "PDPN",  "KRT5", "NGFR", "SCGB1A1", "MUC5B", "KRT17", "FOXJ1", "TMEM190", "CAPS", "CHGA", "CALCA", "ASCL1", "PTPRC", "VWF", "ACTA2", "VIM", "EPCAM")
+
+habermann_imm <- c("CD3E", "CD4", "FOXP3", "IL7R", "IL2RA", "CD40LG", "CD8A", "CCL5", "NCR1", "KLRB1", "NKG7", "LYZ", "CD68", "ITGAX", "MARCO", "FCGR1A", "C1QA", "APOC1", "S100A12", "FCN1", "S100A9", "CD14", "FCER1A", "CD1C", "FCGR3A", "CLEC9A", "LILRA4", "CLEC4C", "JCHAIN", "IGHG1", "IGLL5", "MS4A1", "CD19", "CD79A", "CPA3", "KIT", "MKI67", "CDK1", "EPCAM")
+
+habermann_oth <- c("VWF", "PECAM1", "CCL21", "PROX1", "ACTA2", "MYH11", "PDGFRB", "WT1", "UPK3B", "LUM", "PDGFRA", "MYLK", "HAS1", "PLIN2", "FAP", "PTPRC", "EPCAM")
+
+```
+
+```{r habermann epithelial}
+
+### manual annotation of normal cell types & detection of immune cell contaminated clusters
+
+DotPlot(subset(epi, cluster_type == "Normal"), features = habermann_epi) + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+### manual detection of immune cell contaminated clusters
+
+DotPlot(subset(epi, cluster_type == "Tumor"), features = habermann_epi) + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+DimPlot(epi, group.by = "SCT_snn_res.2", label = T)
+
+```
+
+```{r habermann immune}
+
+DotPlot(imm, features = habermann_imm) + coord_flip()
+
+for (i in seq_along(habermann_imm)) {
+  plotlist <- list()
+  plotlist[1] <- FeaturePlot(imm, features = habermann_imm[i], order = T, combine = F)
+  plotlist[2] <- VlnPlot(imm, features = habermann_imm[i], pt.size = 0, combine = F)
+  print(CombinePlots(plots = plotlist))
+}
+
+```
+
+```{r habermann stromal}
+
+DotPlot(str, features = habermann_oth) + 
+  coord_flip()
+
+for (i in seq_along(habermann_oth)) {
+  plotlist <- list()
+  plotlist[1] <- FeaturePlot(str, features = habermann_oth[i], order = T, combine = F)
+  plotlist[2] <- VlnPlot(str, features = habermann_oth[i], pt.size = 0, combine = F)
+  print(CombinePlots(plots = plotlist, ncol = 3))
+}
+
+```
+
+## Travaglini et al.
+https://www.biorxiv.org/content/10.1101/742320v1
+
+```{r Travaglini marker genes}
+
+#load marker gene lists
+
+sheets <- paste0("Cluster ", c(1:58))
+sheets <- sheets[-43]
+
+signaturelist <- list()
+
+for (i in seq_along(sheets)) {
+  a <- read_excel("data/media-3.xlsx", sheet = sheets[[i]])
+  a <- filter(a, a$...2 > 0.7 & a$...4 < 0.3)
+  signaturelist <- c(signaturelist,a[1])
+  remove(a)
+}
+
+#generate list with names of module scores in seurat object
+
+names_of_modulescores <- c()
+for (i in seq_along(signaturelist)){
+  names_of_modulescores <- c(names_of_modulescores, paste0("T_", names(signaturelist[i]), i))
+}
+
+names_of_modulescores <- gsub(names_of_modulescores, pattern = " ", replacement = ".", fixed = TRUE)
+names_of_modulescores <- gsub(names_of_modulescores, pattern = "+", replacement = ".", fixed = TRUE)
+names_of_modulescores <- gsub(names_of_modulescores, pattern = "/", replacement = ".", fixed = TRUE)
+
+
+#names_of_modulescores_unfiltered <- c()
+#for (i in seq_along(signaturelist)){
+#  names_of_modulescores_unfiltered <- c(names_of_modulescores_unfiltered, paste0(names(signaturelist[i]), "_unfiltered", i))
+#}
+#names_of_modulescores_unfiltered <- gsub(names_of_modulescores_unfiltered, pattern = " ", replacement = ".", fixed = TRUE)
+#names_of_modulescores_unfiltered <- gsub(names_of_modulescores_unfiltered, pattern = "+", replacement = ".", fixed = TRUE)
+#names_of_modulescores_unfiltered <- gsub(names_of_modulescores_unfiltered, pattern = "/", replacement = ".", fixed = TRUE)
+#signature_list_updated <- list()
+#for (i in seq_along(sheets)) {
+#  signature_list_updated[[i]] <- checkGeneSymbols(signature_list[[i]])
+#}
+
+#calculate module scores for different subsets
+
+epi <- AddModuleScore(object = epi, features = signaturelist, name = paste0("T_", names(signaturelist)))
+imm <- AddModuleScore(object = imm, features = signaturelist, name = paste0("T_", names(signaturelist)))
+str <- AddModuleScore(object = str, features = signaturelist, nbin = 12 , name = paste0("T_", names(signaturelist)))
+
+```
+
+## Vieira Braga et al.
+https://www.nature.com/articles/s41591-019-0468-5
+
+```{r Vieira Braga marker gene list}
+
+#load marker gene lists
+
+teichmann_signatures_epi <- read.csv("data/Fig1_DE_Lung_atlas_epithelial.csv")
+teichmann_signatures_epi$gene <- as.character(teichmann_signatures_epi$gene)
+teichmann_epi <- unique(teichmann_signatures_epi$cluster)
+
+teichmann_signatures_imm <- read.csv("data/Fig2_DE_Lung_atlas_immune.csv")
+teichmann_signatures_imm$gene <- as.character(teichmann_signatures_imm$gene)
+teichmann_imm <- unique(teichmann_signatures_imm$cluster)
+
+signaturelist2 <- list()
+
+for (i in seq_along(teichmann_epi)) {
+  signaturelist2 <- c(signaturelist2, teichmann_signatures_epi %>% filter(cluster == teichmann_epi[i], pct.2 < 0.3, avg_logFC > 0.7) %>% select(gene))
+}
+
+for (i in seq_along(teichmann_imm)) {
+  signaturelist2 <- c(signaturelist2, teichmann_signatures_imm %>% filter(cluster == teichmann_imm[i], pct.2 < 0.3, avg_logFC > 0.7) %>% select(gene))
+}
+ 
+names(signaturelist2) <- gsub(c(teichmann_epi, teichmann_imm), pattern = "_", replacement = " ")
+
+#generate list with names of module scores in seurat object
+
+names_of_modulescores2 <- c()
+for (i in seq_along(signaturelist2)){
+  names_of_modulescores2 <- c(names_of_modulescores2, paste0("VB_", names(signaturelist2[i]), i))
+}
+names_of_modulescores2 <- gsub(names_of_modulescores2, pattern = " ", replacement = ".", fixed = TRUE)
+
+#calculate module scores for different subsets
+
+epi <- AddModuleScore(epi, features = signaturelist2, name = paste0("VB_", names(signaturelist2)))
+imm <- AddModuleScore(imm, features = signaturelist2, name = paste0("VB_", names(signaturelist2)))
+str <- AddModuleScore(str, features = signaturelist2, nbin = 12, name = paste0("VB_", names(signaturelist2)))
+
+```
+
+# Curated cell type annotation and subsetting
+```{r curated cell type annotation}
+
+###epithelial
+
+annotation_curated_epi <- read_excel("curated_annotation/curated_annotation_epi.xlsx")
+epi_anno <- epi
+
+epi_data <- FetchData(epi, "ident")
+epi_data$cell_id <- rownames(epi_data)
+epi_data$ident <- as.numeric(as.character(epi_data$ident))
+epi_data <- left_join(x = epi_data, y = annotation_curated_epi, by = "ident")
+rownames(epi_data) <- epi_data$cell_id
+
+epi_anno <- AddMetaData(epi_anno, metadata = epi_data)
+
+epi_anno <- subset(epi_anno, subset = cell_type_epi != "Contamination")
+epi_anno <- ScaleData(epi_anno)
+
+
+###immune
+
+annotation_curated_imm <- read_excel("curated_annotation/curated_annotation_imm.xlsx")
+imm_anno <- imm
+
+imm_data <- FetchData(imm, "ident")
+imm_data$cell_id <- rownames(imm_data)
+imm_data$ident <- as.numeric(as.character(imm_data$ident))
+imm_data <- left_join(x = imm_data, y = annotation_curated_imm, by = "ident")
+rownames(imm_data) <- imm_data$cell_id
+
+imm_anno <- AddMetaData(imm_anno, metadata = imm_data)
+
+#imm_anno <- subset(imm_anno, subset = cell_type_imm != "Contamination")
+imm_anno <- ScaleData(imm_anno)
+
+
+###stromal
+
+annotation_curated_str <- read_excel("curated_annotation/curated_annotation_str.xlsx")
+str_anno <- str
+
+str_data <- FetchData(str, "ident")
+str_data$cell_id <- rownames(str_data)
+str_data$ident <- as.numeric(as.character(str_data$ident))
+str_data <- left_join(x = str_data, y = annotation_curated_str, by = "ident")
+rownames(str_data) <- str_data$cell_id
+
+str_anno <- AddMetaData(str_anno, metadata = str_data)
+
+str_anno <- subset(str_anno, subset = cell_type_str != "Contamination")
+str_anno <- ScaleData(str_anno)
+
+```
+
+```{r cell type signature heatmaps}
+
+###Travaglini et al.
+
+names_of_modulescores_original <- names(signaturelist)
+
+
+#Epithelial
+
+epi_type <- FetchData(epi_anno, vars = c(names_of_modulescores))
+
+for(i in seq_along(names_of_modulescores_original)) {
+    colnames(epi_type)[i] <- names_of_modulescores_original[i]
+  }
+
+epi_type %>%
+  merge(FetchData(epi_anno, vars = c("cluster_type", "cell_type_epi_refined")), by = 0) %>%
+  filter(cluster_type == "Normal") %>%
+  group_by(cell_type_epi_refined) %>%
+  pivot_longer(cols = names_of_modulescores_original, names_to = "T_cell_type") %>%
+  group_by(cell_type_epi_refined, T_cell_type) %>%
+  summarise(mean = mean(value)) %>%
+  mutate(mean = rescale(mean)) %>%
+  ggplot() +
+  geom_tile(aes(x = T_cell_type, y = cell_type_epi_refined, fill = mean))+
+  scale_fill_gradientn(colors = c("blue", "white", "red"),
+                      breaks = c(0, 1),
+                      labels = c("0", "1")) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), axis.text.y = element_text(hjust = 1))
+ggsave2("T_cell_type_epi_cell_type_refined.pdf", path = "output/annotation", width = 30, height = 15, units = "cm")
+
+
+#Immune
+
+imm_type <- FetchData(imm_anno, vars = c(names_of_modulescores))
+
+for(i in seq_along(names_of_modulescores_original)) {
+    colnames(imm_type)[i] <- names_of_modulescores_original[i]
+  }
+
+imm_type %>%
+  merge(FetchData(imm_anno, vars = "cell_type_imm_refined"), by = 0) %>%
+  group_by(cell_type_imm_refined) %>%
+  pivot_longer(cols = names_of_modulescores_original, names_to = "T_cell_type") %>%
+  group_by(cell_type_imm_refined, T_cell_type) %>%
+  summarise(mean = mean(value)) %>%
+  mutate(mean = rescale(mean)) %>%
+  ggplot() +
+  geom_tile(aes(x = T_cell_type, y = cell_type_imm_refined, fill = mean))+
+  scale_fill_gradientn(colors = c("blue", "white", "red"),
+                      breaks = c(0, 1),
+                      labels = c("0", "1")) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), axis.text.y = element_text(hjust = 1))
+ggsave2("T_cell_type_imm_cell_type_refined.pdf", path = "output/annotation", width = 30, height = 30, units = "cm")
+
+
+#Stromal
+
+str_type <- FetchData(str_anno, vars = c(names_of_modulescores))
+
+for(i in seq_along(names_of_modulescores_original)) {
+    colnames(str_type)[i] <- names_of_modulescores_original[i]
+  }
+
+str_type %>%
+  merge(FetchData(str_anno, vars = "cell_type_str_refined"), by = 0) %>%
+  group_by(cell_type_str_refined) %>%
+  pivot_longer(cols = names_of_modulescores_original, names_to = "T_cell_type") %>%
+  group_by(cell_type_str_refined, T_cell_type) %>%
+  summarise(mean = mean(value)) %>%
+  mutate(mean = rescale(mean)) %>%
+  ggplot() +
+  geom_tile(aes(x = T_cell_type, y = cell_type_str_refined, fill = mean))+
+  scale_fill_gradientn(colors = c("blue", "white", "red"),
+                      breaks = c(0, 1),
+                      labels = c("0", "1")) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), axis.text.y = element_text(hjust = 1))
+ggsave2("T_cell_type_str_cell_type_refined.pdf", path = "output/annotation", width = 30, height = 20, units = "cm")
+
+
+
+###Vieira Braga et al.
+
+names_of_modulescores_original2 <- names(signaturelist2)
+
+
+#Epithelial
+
+epi_type <- FetchData(epi_anno, vars = c(names_of_modulescores2))
+
+for(i in seq_along(names_of_modulescores_original2)) {
+    colnames(epi_type)[i] <- names_of_modulescores_original2[i]
+  }
+
+epi_type %>%
+  merge(FetchData(epi_anno, vars = c("cluster_type", "cell_type_epi_refined")), by = 0) %>%
+  filter(cluster_type == "Normal") %>%
+  group_by(cell_type_epi_refined) %>%
+  pivot_longer(cols = names_of_modulescores_original2, names_to = "VB_cell_type") %>%
+  group_by(cell_type_epi_refined, VB_cell_type) %>%
+  summarise(mean = mean(value)) %>%
+  mutate(mean = rescale(mean)) %>%
+  ggplot() +
+  geom_tile(aes(x = VB_cell_type, y = cell_type_epi_refined, fill = mean))+
+  scale_fill_gradientn(colors = c("blue", "white", "red"),
+                      breaks = c(0, 1),
+                      labels = c("0", "1")) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), axis.text.y = element_text(hjust = 1))
+ggsave2("VB_cell_type_epi_cell_type_refined.pdf", path = "output/annotation", width = 20, height = 10, units = "cm")
+
+
+#Immune
+
+imm_type <- FetchData(imm_anno, vars = c(names_of_modulescores2))
+
+for(i in seq_along(names_of_modulescores_original2)) {
+    colnames(imm_type)[i] <- names_of_modulescores_original2[i]
+  }
+
+imm_type %>%
+  merge(FetchData(imm_anno, vars = "cell_type_imm_refined"), by = 0) %>%
+  group_by(cell_type_imm_refined) %>%
+  pivot_longer(cols = names_of_modulescores_original2, names_to = "VB_cell_type") %>%
+  group_by(cell_type_imm_refined, VB_cell_type) %>%
+  summarise(mean = mean(value)) %>%
+  mutate(mean = rescale(mean)) %>%
+  ggplot() +
+  geom_tile(aes(x = VB_cell_type, y = cell_type_imm_refined, fill = mean))+
+  scale_fill_gradientn(colors = c("blue", "white", "red"),
+                      breaks = c(0, 1),
+                      labels = c("0", "1")) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), axis.text.y = element_text(hjust = 1))
+ggsave2("VB_cell_type_imm_cell_type_refined.pdf", path = "output/annotation", width = 20, height = 30, units = "cm")
+
+
+#Stromal
+
+str_type <- FetchData(str_anno, vars = c(names_of_modulescores2))
+
+for(i in seq_along(names_of_modulescores_original2)) {
+    colnames(str_type)[i] <- names_of_modulescores_original2[i]
+  }
+
+str_type %>%
+  merge(FetchData(str_anno, vars = "cell_type_str_refined"), by = 0) %>%
+  group_by(cell_type_str_refined) %>%
+  pivot_longer(cols = names_of_modulescores_original2, names_to = "VB_cell_type") %>%
+  group_by(cell_type_str_refined, VB_cell_type) %>%
+  summarise(mean = mean(value)) %>%
+  mutate(mean = rescale(mean)) %>%
+  ggplot() +
+  geom_tile(aes(x = VB_cell_type, y = cell_type_str_refined, fill = mean))+
+  scale_fill_gradientn(colors = c("blue", "white", "red"),
+                      breaks = c(0, 1),
+                      labels = c("0", "1")) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), axis.text.y = element_text(hjust = 1))
+ggsave2("VB_cell_type_str_cell_type_refined.pdf", path = "output/annotation", width = 20, height = 20, units = "cm")
+
+```
+
+```{r hallmark and progeny scores}
+
+#hallmark signatures
+
+broad_pws <- read_lines("data/h.all.v6.2.symbols.gmt") %>%
+  lapply(str_split, "\\t") %>% 
+  unlist(recursive = F) %>% 
+  lapply(function(x) setNames(list(x[-c(1:2)]), x[1])) %>% 
+  unlist(recursive = F)
+
+epi_anno <- AddModuleScore(object = epi_anno, features = broad_pws, name = names(broad_pws))
+imm_anno <- AddModuleScore(object = imm_anno, features = broad_pws, name = names(broad_pws))
+str_anno <- AddModuleScore(object = str_anno, features = broad_pws, name = names(broad_pws), nbin = 12)
+
+#progeny signatures
+
+epi_anno <- progeny(epi_anno, scale = F, organism="Human", top=500, perm=1, return_assay=T)
+epi_anno <- ScaleData(epi_anno, assay = "progeny")
+
+imm_anno <- progeny(imm_anno, scale = F, organism="Human", top=500, perm=1, return_assay=T)
+imm_anno <- ScaleData(imm_anno, assay = "progeny")
+
+str_anno <- progeny(str_anno, scale = F, organism="Human", top=500, perm=1, return_assay=T)
+str_anno <- ScaleData(str_anno, assay = "progeny")
+
+```
+
+```{r save RDS files}
+
+saveRDS(epi_anno, file = "seurat_objects/epi_anno.RDS")
+saveRDS(imm_anno, file = "seurat_objects/imm_anno.RDS")
+saveRDS(str_anno, file = "seurat_objects/str_anno.RDS")
+
+```

@@ -1,0 +1,249 @@
+
+```{r setup}
+
+### load libraries
+library(ggplot2)
+library(Seurat)
+library(dplyr)
+library(cowplot)
+library(viridis)
+library(tidyr)
+library(magrittr)
+library(reshape2)
+library(readxl)
+library(stringr)
+library(cowplot)
+library(scales)
+library(tibble)
+library(gplots)
+library(RColorBrewer)
+
+theme_set(theme_cowplot())
+
+#color scheme
+use_colors <- c(
+  Tumor = "brown2",
+  Normal = "deepskyblue2",
+  G1 = "#46ACC8",
+  G2M = "#E58601",
+  S = "#B40F20",
+  Epithelial = "seagreen",
+  Immune = "darkgoldenrod2",
+  Stromal = "steelblue",
+  Patient1 = "#35274A",
+  Patient2 = "#E2D200",
+  Patient3 = "#FD6467",
+  Patient4 = "#5B1A18",
+  Patient5 = "#46ACC8",
+  Patient6 = "#E58601",
+  Patient7 = "#B40F20",
+  Patient8 = "#0B775E",
+  Patient9 = "#E1BD6D",
+  Patient10 = "#7294D4",
+  AT1 = "#2B8CBE",
+  AT2 = "#045A8D",
+  `Club/basal` = "#006D2C",
+  Ciliated = "#74C476")
+
+```
+
+```{r load data}
+
+epi_anno <- readRDS("seurat_objects/epi_anno.RDS")
+
+epi_anno@meta.data$cell_type_epi <- factor(epi_anno@meta.data$cell_type_epi, levels = c("AT2",
+                                                                                        "AT1",
+                                                                                        "Club/basal",
+                                                                                        "Ciliated",
+                                                                                        "Tumor"))
+
+```
+
+```{r UMAPs and marker genes}
+
+DotPlot(subset(epi_anno, cluster_type == "Normal"), features = c("ABCA3", "SFTPC", "AGER", "PDPN",  "KRT5", "TRP63", "NGFR", "SCGB1A1", "MUC5B", "FOXJ1", "TMEM190"), group.by = "cell_type_epi") + 
+  coord_flip() + 
+  scale_color_viridis()
+ggsave2("DotPlot_markergenes_epi_cell_type.pdf", path = "output/fig2", width = 11, height = 8, units = "cm")
+
+DimPlot(epi_anno, group.by = "cell_type_epi", cols = use_colors, pt.size = 0.5)
+ggsave2("DimPlot_cell_type_epi_Normal+Tumor.png", path = "output/fig2", width = 15, height = 15, units = "cm")
+
+DimPlot(epi_anno, group.by = "patient_id", cols = use_colors, pt.size = 0.5)
+ggsave2("DimPlot_patient_id_Normal+Tumor.png", path = "output/fig2", width = 15, height = 15, units = "cm")
+
+DimPlot(epi_anno, group.by = "tissue_type", cols = use_colors, pt.size = 0.5)
+ggsave2("DimPlot tissue_type_Normal+Tumor.png", path = "output/fig2", width = 15, height = 15, units = "cm")
+
+epi_cell_counts <- FetchData(epi_anno, vars = c("tissue_type", "cell_type_epi")) %>%
+  mutate(tissue_type = factor(tissue_type, levels = c("Tumor", "Normal")))
+ggplot(data = epi_cell_counts, aes(x = tissue_type, fill = cell_type_epi)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = use_colors) +
+  scale_y_reverse() +
+  coord_flip()
+ggsave2("BarPlot_cell_type_epi_Normal_Tumor.pdf", path = "output/fig2", width = 20, height = 5, units = "cm")
+
+```
+
+```{r subset tumor cluster cells from tumor samples}
+
+epi_tumor <- subset(epi_anno, cluster_type == "Tumor" & tissue_type == "Tumor")
+
+epi_tumor <- ScaleData(epi_tumor)
+
+epi_tumor$patient_id <- factor(epi_tumor$patient_id, levels = c("Patient1", "Patient2", "Patient3"))
+
+DimPlot(epi_tumor, group.by = "SCT_snn_res.1", label = T)
+ggsave2("DimPlot_epi_tumor_clusters.png", path = "output/fig2", width = 10, height = 10, units = "cm")
+
+FeaturePlot(epi_tumor, "nCount_RNA", order = T)
+ggsave2("FeaturePlot_epi_tumor_nCount_RNA.png", path = "output/fig2", width = 10, height = 10, units = "cm")
+
+FeaturePlot(epi_tumor, "nFeature_RNA", order = T)
+ggsave2("FeaturePlot_epi_tumor_nFeature_RNA.png", path = "output/fig2", width = 10, height = 10, units = "cm")
+
+```
+
+```{r differential gene expression tumor cells}
+
+Idents(epi_tumor) <- epi_tumor@meta.data$patient_id
+
+markers <- FindAllMarkers(epi_tumor, only.pos = T, min.pct = 0.25, min.diff.pct = 0.25)
+
+top_TC_markers <- markers %>% group_by(cluster) %>% top_n(20, wt = avg_log2FC)
+
+DoHeatmap(epi_tumor, features = top_TC_markers$gene, group.by = "patient_id", draw.lines = F) +
+  scale_fill_viridis()
+ggsave2("HeatMap_Tumor.pdf", path = "output/fig2", width = 30, height = 30, units = "cm")
+ggsave2("HeatMap_Tumor.png", path = "output/fig2", width = 30, height = 30, units = "cm")
+
+```
+
+```{r cell cycle phase and mitochondrial reads}
+
+mitotic_activity <- FetchData(epi_tumor, c("tissue_type", "cell_type_epi", "Phase", "patient_id", "SCT_snn_res.1"))
+
+ggplot(mitotic_activity, aes(x = patient_id, fill = Phase)) +
+  geom_bar(position = "fill", width = 0.75) +
+  scale_fill_manual(values = use_colors)
+ggsave2("Cellcycle_Tumor.pdf", path = "output/fig2", width = 12, height = 10, units = "cm")
+
+ggplot(mitotic_activity, aes(x = SCT_snn_res.1, fill = Phase)) +
+  geom_bar(position = "fill", width = 0.75) +
+  scale_fill_manual(values = use_colors)
+ggsave2("Cellcycle_Tumor_per_cluster.pdf", path = "output/fig2", width = 12, height = 10, units = "cm")
+
+VlnPlot(epi_tumor, "pMT", group.by = "patient_id", pt.size = 0, cols = use_colors)
+ggsave2("pMT_Tumor.pdf", path = "output/fig2", width = 12, height = 10, units = "cm")
+
+```
+
+```{r progeny scores tumor cells}
+
+###clustered heatmap progeny scores
+
+progeny_scores <- as.data.frame(t(GetAssayData(epi_tumor, assay = "progeny", slot = "scale.data")))
+progeny_scores$cell_id <- rownames(progeny_scores)
+progeny_scores <- gather(progeny_scores, Pathway, Activity, -cell_id)
+
+cells_clusters <- FetchData(epi_tumor, c("patient_id", "cluster_type"))
+cells_clusters$cell_id <- rownames(cells_clusters)
+
+progeny_scores <- inner_join(progeny_scores, cells_clusters)
+
+summarized_progeny_scores <- progeny_scores %>% 
+  group_by(Pathway, patient_id) %>% 
+  summarise(avg = mean(Activity), std = sd(Activity)) %>%
+  pivot_wider(id_cols = Pathway, names_from = patient_id, values_from = avg) %>%
+  column_to_rownames("Pathway") %>%
+  as.matrix()
+
+pdf("output/fig2/Progeny_Tumor.pdf", width = 6, height = 8)
+heatmap.2(summarized_progeny_scores, trace = "none", density.info = "none", col = bluered(100))
+dev.off()
+
+```
+
+```{r molecular subtype signatures in epithelial cells}
+
+###signatures from Alcala et al.
+
+signatures_alcala <- read_excel("data/41467_2019_11276_MOESM13_ESM.xlsx", range = "A41:V946")
+
+signatures_alcala$log2FoldChange.A1_vs_A2 <- as.numeric(signatures_alcala$log2FoldChange.A1_vs_A2)
+signatures_alcala$log2FoldChange.A1_vs_B <- as.numeric(signatures_alcala$log2FoldChange.A1_vs_B)
+signatures_alcala$log2FoldChange.A2_vs_B <- as.numeric(signatures_alcala$log2FoldChange.A2_vs_B)
+
+signatures_alcala_LNET_A1a <- signatures_alcala %>% filter(log2FoldChange.A1_vs_A2 != "NA") %>% slice_max(log2FoldChange.A1_vs_A2, n = 50) %>% .$Gene
+signatures_alcala_LNET_A1b <- signatures_alcala %>% filter(log2FoldChange.A1_vs_B != "NA") %>% slice_max(log2FoldChange.A1_vs_B, n = 50) %>% .$Gene
+signatures_alcala_LNET_A2a <- signatures_alcala %>% filter(log2FoldChange.A1_vs_A2 != "NA") %>% slice_min(log2FoldChange.A1_vs_A2, n = 50) %>% .$Gene
+signatures_alcala_LNET_A2b <- signatures_alcala %>% filter(log2FoldChange.A2_vs_B != "NA") %>% slice_max(log2FoldChange.A2_vs_B, n = 50) %>% .$Gene
+signatures_alcala_LNET_B1 <- signatures_alcala %>% filter(log2FoldChange.A1_vs_B != "NA") %>% slice_min(log2FoldChange.A1_vs_B, n = 50) %>% .$Gene
+signatures_alcala_LNET_B2 <- signatures_alcala %>% filter(log2FoldChange.A2_vs_B != "NA") %>% slice_min(log2FoldChange.A2_vs_B, n = 50) %>% .$Gene
+
+signatures_alcala_LNET_A1 <- unique(c(signatures_alcala_LNET_A1a, signatures_alcala_LNET_A1b))
+signatures_alcala_LNET_A2 <- unique(c(signatures_alcala_LNET_A2a, signatures_alcala_LNET_A2b))
+signatures_alcala_LNET_B <- unique(c(signatures_alcala_LNET_B1, signatures_alcala_LNET_B2))
+
+###Add Module Score
+
+signatures_alcala <- list(signatures_alcala_LNET_A1, signatures_alcala_LNET_A2, signatures_alcala_LNET_B)
+names(signatures_alcala) <- c("LNET_A1", "LNET_A2", "LNET_B")
+
+epi_tumor <- AddModuleScore(epi_tumor, features = signatures_alcala, name = names(signatures_alcala))
+
+FeaturePlot(epi_tumor, features = c("LNET_A11", "LNET_A22", "LNET_B3"), order = T, keep.scale = "all")
+ggsave2("epi_signatures_umap.pdf", path = "output/fig2", width = 30, height = 30, units = "cm")
+
+```
+
+```{r molecular subtype signatures in epithelial, immune and stromal cells}
+
+str_anno <- readRDS("seurat_objects/str_anno.RDS")
+str_tumor <- subset(str_anno, tissue_type == "Tumor")
+str_tumor <- ScaleData(str_tumor)
+str_tumor <- AddModuleScore(str_tumor, features = signatures_alcala, name = names(signatures_alcala))
+
+imm_anno <- readRDS("seurat_objects/imm_anno.RDS")
+imm_tumor <- subset(imm_anno, tissue_type == "Tumor")
+imm_tumor <- ScaleData(imm_tumor)
+imm_tumor <- AddModuleScore(imm_tumor, features = signatures_alcala, name = names(signatures_alcala))
+
+VlnPlot(epi_tumor, features = c("LNET_A11", "LNET_A22", "LNET_B3"), pt.size = 0, group.by = "patient_id", ncol = 3, same.y.lims = T, cols = use_colors)
+ggsave2("epi_signatures.pdf", path = "output/fig2", width = 10, height = 8, units = "cm")
+
+VlnPlot(str_tumor, features = c("LNET_A11", "LNET_A22", "LNET_B3"), pt.size = 0, group.by = "patient_id", ncol = 3, same.y.lims = T, cols = use_colors)
+ggsave2("str_signatures.pdf", path = "output/fig2", width = 10, height = 8, units = "cm")
+
+VlnPlot(imm_tumor, features = c("LNET_A11", "LNET_A22", "LNET_B3"), pt.size = 0, group.by = "patient_id", ncol = 3, same.y.lims = T, cols = use_colors)
+ggsave2("imm_signatures.pdf", path = "output/fig2", width = 10, height = 8, units = "cm")
+
+```
+
+```{r differential gene expression within individual patients}
+
+Idents(epi_tumor) <- epi_tumor@meta.data$SCT_snn_res.1
+
+epi_p1 <- ScaleData(subset(epi_tumor, SCT_snn_res.1 %in% c(2, 3, 6)))
+epi_p2 <- ScaleData(subset(epi_tumor, SCT_snn_res.1 %in% c(0, 5, 7)))
+epi_p3 <- ScaleData(subset(epi_tumor, SCT_snn_res.1 %in% c(1, 4, 16)))
+
+epi_p_list <- list(epi_p1, epi_p2, epi_p3)
+patients <- c("Patient1", "Patient2", "Patient3")
+
+for (i in seq_along(epi_p_list)){
+  print(DimPlot(epi_p_list[[i]], group.by = "SCT_snn_res.1"))
+  markers <- FindAllMarkers(epi_p_list[[i]], only.pos = T, min.pct = 0.25, min.diff.pct = 0.25)
+  top_TC_markers <- markers %>% group_by(cluster) %>% top_n(30, wt = avg_log2FC)
+  DoHeatmap(epi_p_list[[i]], features = top_TC_markers$gene, group.by = "SCT_snn_res.1", draw.lines = F) + 
+    scale_fill_viridis()
+  ggsave2(paste0("HeatMap_Tumor_", patients[i], ".pdf"), path = "output/fig2", width = 15, height = 15, units = "cm")
+  ggsave2(paste0("HeatMap_Tumor_", patients[i], ".png"), path = "output/fig2", width = 15, height = 15, units = "cm")
+}
+
+DimPlot(epi_tumor, group.by = "patient_id")
+DimPlot(epi_tumor, group.by = "SCT_snn_res.2", label = T)
+DimPlot(epi_tumor, group.by = "Phase")
+
+```
