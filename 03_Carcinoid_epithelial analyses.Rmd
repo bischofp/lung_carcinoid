@@ -30,16 +30,16 @@ use_colors <- c(
   Epithelial = "seagreen",
   Immune = "darkgoldenrod2",
   Stromal = "steelblue",
-  Patient1 = "#35274A",
+  Patient1 = "#B40F20",
   Patient2 = "#E2D200",
   Patient3 = "#FD6467",
-  Patient4 = "#5B1A18",
-  Patient5 = "#46ACC8",
-  Patient6 = "#E58601",
-  Patient7 = "#B40F20",
-  Patient8 = "#0B775E",
-  Patient9 = "#E1BD6D",
-  Patient10 = "#7294D4",
+  Patient4 = "royalblue4",
+  Patient5 = "dodgerblue3",
+  Patient6 = "deepskyblue",
+  Patient7 = "cadetblue1",
+  Patient8 = "darkolivegreen2",
+  Patient9 = "chartreuse3",
+  Patient10 = "darkgreen",
   AT1 = "#2B8CBE",
   AT2 = "#045A8D",
   `Club/basal` = "#006D2C",
@@ -139,6 +139,40 @@ ggsave2("pMT_Tumor.pdf", path = "output/fig2", width = 12, height = 10, units = 
 
 ```
 
+
+
+
+
+
+```{r progeny scores tumor cells}
+
+###clustered heatmap progeny scores
+
+progeny_scores <- as.data.frame(t(GetAssayData(epi_anno, assay = "progeny", slot = "scale.data")))
+progeny_scores$cell_id <- rownames(progeny_scores)
+progeny_scores <- gather(progeny_scores, Pathway, Activity, -cell_id)
+
+cells_clusters <- FetchData(epi_anno, c("patient_id", "cluster_type"))
+cells_clusters$cell_id <- rownames(cells_clusters)
+
+progeny_scores <- inner_join(progeny_scores, cells_clusters)
+
+progeny_scores <- progeny_scores %>% mutate(cell_group = ifelse(cluster_type == "Tumor" & patient_id %in% c("Patient1", "Patient2", "Patient3"), patient_id, ifelse(patient_id %in% c("Patient1", "Patient2", "Patient3"), "Normal1-3", "Normal4-10")))
+
+summarized_progeny_scores <- progeny_scores %>% 
+  group_by(Pathway, cell_group) %>% 
+  summarise(avg = mean(Activity), std = sd(Activity)) %>%
+  pivot_wider(id_cols = Pathway, names_from = cell_group, values_from = avg) %>%
+  column_to_rownames("Pathway") %>%
+  as.matrix()
+
+pdf("output/fig2/Progeny_Tumor_2.pdf", width = 6, height = 8)
+heatmap.2(summarized_progeny_scores, trace = "none", density.info = "none", col = bluered(100))
+dev.off()
+
+```
+
+
 ```{r progeny scores tumor cells}
 
 ###clustered heatmap progeny scores
@@ -164,6 +198,9 @@ heatmap.2(summarized_progeny_scores, trace = "none", density.info = "none", col 
 dev.off()
 
 ```
+
+
+
 
 ```{r molecular subtype signatures in epithelial cells}
 

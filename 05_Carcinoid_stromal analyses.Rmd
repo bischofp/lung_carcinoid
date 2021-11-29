@@ -18,6 +18,7 @@ library(grid)
 library(rlang)
 library(tibble)
 library(SeuratDisk)
+library(ggsankey)
 
 theme_set(theme_cowplot())
 
@@ -31,16 +32,16 @@ use_colors <- c(
   Epithelial = "seagreen",
   Immune = "darkgoldenrod2",
   Stromal = "steelblue",
-  Patient1 = "#35274A",
+  Patient1 = "#B40F20",
   Patient2 = "#E2D200",
   Patient3 = "#FD6467",
-  Patient4 = "#5B1A18",
-  Patient5 = "#46ACC8",
-  Patient6 = "#E58601",
-  Patient7 = "#B40F20",
-  Patient8 = "#0B775E",
-  Patient9 = "#E1BD6D",
-  Patient10 = "#7294D4",
+  Patient4 = "royalblue4",
+  Patient5 = "dodgerblue3",
+  Patient6 = "deepskyblue",
+  Patient7 = "cadetblue1",
+  Patient8 = "darkolivegreen2",
+  Patient9 = "chartreuse3",
+  Patient10 = "darkgreen",
   Endothelial_Bronchial = "#FED976",
   Endothelial_Artery = "#fd8d3C",
   Endothelial_Vein = "#E31A1C",
@@ -715,5 +716,26 @@ ggsave2("UMAP_cell_type_str.png", path = "output/ingested_annotation", width = 1
 DimPlot(str_anno_carcinoid, group.by = "cell_type_str_new", cols = use_colors2)
 ggsave2("UMAP_cell_type_str_new.pdf", path = "output/ingested_annotation", width = 15, height = 15, units = "cm")
 ggsave2("UMAP_cell_type_str_new.png", path = "output/ingested_annotation", width = 15, height = 15, units = "cm")
+
+```
+
+```{r}
+
+cell_types <- FetchData(str_anno_carcinoid, c("cell_type_str", "cell_type_str_new"))
+
+cell_types <- cell_types %>% make_long(cell_type_str, cell_type_str_new)
+
+ggplot(cell_types, aes(x = x, 
+               next_x = next_x, 
+               node = node, 
+               next_node = next_node,
+               fill = factor(node),
+               label = node)) +
+  geom_sankey() +
+  geom_sankey_label() +
+  scale_fill_manual(values = c(use_colors, use_colors2)) +
+  theme_sankey() +
+  theme(legend.position = "none")
+ggsave2("sankey_str.pdf", path = "output/ingested_annotation", width = 15, height = 15, units = "cm")
 
 ```

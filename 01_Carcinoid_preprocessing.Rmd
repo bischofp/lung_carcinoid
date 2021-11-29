@@ -27,16 +27,16 @@ use_colors <- c(
   Epithelial = "seagreen",
   Immune = "darkgoldenrod2",
   Stromal = "steelblue",
-  Patient1 = "#35274A",
+  Patient1 = "#B40F20",
   Patient2 = "#E2D200",
   Patient3 = "#FD6467",
-  Patient4 = "#5B1A18",
-  Patient5 = "#46ACC8",
-  Patient6 = "#E58601",
-  Patient7 = "#B40F20",
-  Patient8 = "#0B775E",
-  Patient9 = "#E1BD6D",
-  Patient10 = "#7294D4")
+  Patient4 = "royalblue4",
+  Patient5 = "dodgerblue3",
+  Patient6 = "deepskyblue",
+  Patient7 = "cadetblue1",
+  Patient8 = "darkolivegreen2",
+  Patient9 = "chartreuse3",
+  Patient10 = "darkgreen")
 
 #filter parameters
 nFeature_lower <- 500
