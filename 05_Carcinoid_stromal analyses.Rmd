@@ -32,9 +32,9 @@ use_colors <- c(
   Epithelial = "seagreen",
   Immune = "darkgoldenrod2",
   Stromal = "steelblue",
-  Patient1 = "#B40F20",
-  Patient2 = "#E2D200",
-  Patient3 = "#FD6467",
+  Patient1 = "#E2D200",
+  Patient2 = "#FD6467",
+  Patient3 = "#B40F20",
   Patient4 = "royalblue4",
   Patient5 = "dodgerblue3",
   Patient6 = "deepskyblue",
@@ -331,19 +331,27 @@ str_fibro <- ScaleData(str_fibro)
 
 ###absolute cell counts
 
-endo_counts <- FetchData(str_endo, vars = c("tissue_type", "cell_type_str", "sample_id", "patient_id")) %>%  
+endo_counts <- FetchData(str_endo, vars = c("tissue_type", "cell_type_str", "cell_type_str_refined", "sample_id", "patient_id")) %>%  
   mutate(tissue_type = factor(tissue_type, levels = c("Tumor", "Normal")))
 
 endo_counts_tbl <- endo_counts %>%
   dplyr::count(cell_type_str, patient_id, tissue_type)
 write_csv(endo_counts_tbl, path = "output/tables/endo_counts.csv")
 
-fibro_counts <- FetchData(str_fibro, vars = c("tissue_type", "cell_type_str", "sample_id", "patient_id")) %>%  
+endo_counts_tbl_refined <- endo_counts %>%
+  dplyr::count(cell_type_str_refined, patient_id, tissue_type)
+write_csv(endo_counts_tbl_refined, path = "output/tables/endo_counts_refined.csv")
+
+fibro_counts <- FetchData(str_fibro, vars = c("tissue_type", "cell_type_str", "cell_type_str_refined", "sample_id", "patient_id")) %>%  
   mutate(tissue_type = factor(tissue_type, levels = c("Tumor", "Normal"))) 
 
 fibro_counts_tbl <- fibro_counts %>%
   dplyr::count(cell_type_str, patient_id, tissue_type)
 write_csv(fibro_counts_tbl, path = "output/tables/fibro_counts.csv")
+
+fibro_counts_tbl_refined <- fibro_counts %>%
+  dplyr::count(cell_type_str_refined, patient_id, tissue_type)
+write_csv(fibro_counts_tbl_refined, path = "output/tables/fibro_counts_refined.csv")
 
 
 ###plots

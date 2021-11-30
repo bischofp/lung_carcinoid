@@ -36,9 +36,9 @@ use_colors <- c(
   Epithelial = "seagreen",
   Immune = "darkgoldenrod2",
   Stromal = "steelblue",
-  Patient1 = "#B40F20",
-  Patient2 = "#E2D200",
-  Patient3 = "#FD6467",
+  Patient1 = "#E2D200",
+  Patient2 = "#FD6467",
+  Patient3 = "#B40F20",
   Patient4 = "royalblue4",
   Patient5 = "dodgerblue3",
   Patient6 = "deepskyblue",
@@ -397,6 +397,10 @@ lympho_counts_tbl <- lympho_counts %>%
   dplyr::count(cell_type_imm, patient_id, tissue_type)
 write_csv(lympho_counts_tbl, path = "output/tables/lympho_counts.csv")
 
+lympho_counts_tbl_refined <- lympho_counts %>%
+  dplyr::count(cell_type_imm_refined, patient_id, tissue_type)
+write_csv(lympho_counts_tbl_refined, path = "output/tables/lympho_counts_refined.csv")
+
 myelo_counts <- FetchData(imm_myelo, vars = c("tissue_type", "cell_type_imm", "cell_type_imm_refined", "sample_id", "patient_id")) %>%  
   mutate(tissue_type = factor(tissue_type, levels = c("Tumor", "Normal"))) 
 
@@ -404,6 +408,9 @@ myelo_counts_tbl <- myelo_counts %>%
   dplyr::count(cell_type_imm, patient_id, tissue_type)
 write_csv(myelo_counts_tbl, path = "output/tables/myelo_counts.csv")
 
+myelo_counts_tbl_refined <- myelo_counts %>%
+  dplyr::count(cell_type_imm_refined, patient_id, tissue_type)
+write_csv(myelo_counts_tbl_refined, path = "output/tables/myelo_counts_refined.csv")
 
 
 ###plots cell counts

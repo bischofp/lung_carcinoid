@@ -161,16 +161,16 @@ Idents(str_endo) <- str_endo@meta.data$cell_type_str_refined
 Idents(str_fibro) <- str_fibro@meta.data$cell_type_str_refined
 
 myelo_markers_refined <- FindAllMarkers(imm_myelo, only.pos = T, min.pct = 0.25, min.diff.pct = 0.25)
-write_csv(myelo_markers, path = "output/tables/myelo_clusters_markers.csv")
+write_csv(myelo_markers_refined, path = "output/tables/myelo_clusters_markers.csv")
 
 lympho_markers_refined <- FindAllMarkers(imm_lympho, only.pos = T, min.pct = 0.25, min.diff.pct = 0.25)
-write_csv(lympho_markers, path = "output/tables/lympho_clusters_markers.csv")
+write_csv(lympho_markers_refined, path = "output/tables/lympho_clusters_markers.csv")
 
 endo_markers_refined <- FindAllMarkers(str_endo, only.pos = T, min.pct = 0.25, min.diff.pct = 0.25)
-write_csv(endo_markers, path = "output/tables/endo_clusters_markers.csv")
+write_csv(endo_markers_refined, path = "output/tables/endo_clusters_markers.csv")
 
 fibro_markers_refined <- FindAllMarkers(str_fibro, only.pos = T, min.pct = 0.25, min.diff.pct = 0.25)
-write_csv(fibro_markers, path = "output/tables/fibro_clusters_markers.csv")
+write_csv(fibro_markers_refined, path = "output/tables/fibro_clusters_markers.csv")
 
 clusters_myelo_refined <- as.character(unique(myelo_markers_refined$cluster))
 clusters_lympho_refined <- as.character(unique(lympho_markers_refined$cluster))
